@@ -8,6 +8,8 @@ export interface Student {
   name: string
   seq: number
   pinyin_initial: string
+  student_no?: string | null
+  bind_code?: string | null
   active: number
 }
 

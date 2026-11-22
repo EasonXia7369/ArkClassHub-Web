@@ -3,6 +3,7 @@ import { computed, ref } from 'vue'
 import { get, post, put } from '@/api'
 import { useClassStore } from '@/stores/class'
 import { pinyinInitial, initialOf } from '@/utils/pinyin'
+import QRCode from 'qrcode'
 import Icon from '@/components/Icon.vue'
 
 const store = useClassStore()
@@ -63,6 +64,90 @@ async function saveEdit() {
 async function setActive(s: any, active: boolean) {
   await put(`/api/classes/${store.current!.id}/students/${s.id}`, { active })
   await refresh()
+}
+
+/* ---------- 家长绑定码/二维码（家长凭 学号+绑定码 绑定孩子） ---------- */
+
+/** 生成/重置单个学生的绑定码（重置不撤销已绑定家长）。 */
+async function genBindCode(s: any) {
+  try {
+    const res = await post<{ bind_code: string }>(
+      `/api/classes/${store.current!.id}/students/${s.id}/bind-code`,
+      {},
+    )
+    await refresh()
+    toast(`已生成 ${s.name} 的绑定码：${res.bind_code}`)
+  } catch (e: any) {
+    error.value = e.message
+  }
+}
+
+/** 批量：给全部无码在读学生生成绑定码。 */
+const bulkCodeBusy = ref(false)
+async function genBindCodesBulk() {
+  if (bulkCodeBusy.value) return
+  bulkCodeBusy.value = true
+  try {
+    const res = await post<{ generated: number }>(
+      `/api/classes/${store.current!.id}/students/bind-codes/bulk`,
+      {},
+    )
+    await refresh()
+    toast(`已为 ${res.generated} 名学生生成绑定码`)
+  } catch (e: any) {
+    error.value = e.message
+  } finally {
+    bulkCodeBusy.value = false
+  }
+}
+
+/** 解绑：撤销该学生的全部家长令牌（已绑定设备立即失效）。 */
+async function unbindStudent(s: any) {
+  if (!confirm(`解除 ${s.name} 的全部家长绑定？已绑定的手机将立即失效，家长需重新绑定。`)) return
+  try {
+    await post(`/api/classes/${store.current!.id}/students/${s.id}/unbind`, {})
+    await refresh()
+    toast(`已解除 ${s.name} 的家长绑定`)
+  } catch (e: any) {
+    error.value = e.message
+  }
+}
+
+/** 绑定二维码弹层：链接 = 家长视图 + 学号 + 绑定码，扫码自动完成绑定。 */
+const showBindQr = ref<any>(null)
+const bindQrData = ref('')
+const bindLink = ref('')
+
+let cachedParentKey = ''
+
+async function openBindQr(s: any) {
+  if (!s.bind_code) {
+    toast('该学生还没有绑定码，先生成')
+    return
+  }
+  const pkey = cachedParentKey || (await (async () => {
+    const detail = await get<any>(`/api/classes/${store.current!.id}`)
+    cachedParentKey = detail.class?.parent_key ?? ''
+    return cachedParentKey
+  })())
+  if (!pkey) {
+    toast('请先在「班级设置」生成家长链接')
+    return
+  }
+  showBindQr.value = s
+  // 二维码链接固定用生产域名（桌面端/本地环境 location.origin 是 ark://app / localhost，手机扫不出）
+  const origin = 'https://ach.macrostar.top'
+  bindLink.value = `${origin}/parent/${pkey}?no=${encodeURIComponent(s.student_no ?? '')}&bc=${s.bind_code}`
+  bindQrData.value = await QRCode.toDataURL(bindLink.value, { width: 320, margin: 2 })
+}
+
+async function copyBindLink() {
+  try {
+    await navigator.clipboard.writeText(bindLink.value)
+    toast('绑定链接已复制')
+  } catch {
+    toast('复制失败，请手动选择')
+  }
 }
 
 /* ---------- 学号（家长凭学号在共享链接里绑定孩子） ---------- */
@@ -319,6 +404,9 @@ async function confirmImport() {
         maxlength="20"
         @keyup.enter="add"
       />
+      <button class="gbtn" :disabled="bulkCodeBusy" @click="genBindCodesBulk">
+        <Icon name="lock" :size="15" /> {{ bulkCodeBusy ? '生成中…' : '批量生成绑定码' }}
+      </button>
       <button class="gbtn" @click="showNos = true; nosText = ''; nosParsed = null; nosNote = ''">
         <Icon name="users" :size="15" /> 批量填学号
       </button>
@@ -356,8 +444,18 @@ async function confirmImport() {
             @change="onNoChange(s, $event)"
             @keyup.enter="($event.target as HTMLInputElement).blur()"
           />
+          <input
+            class="ginput code-input"
+            :value="s.bind_code ?? ''"
+            placeholder="绑定码"
+            readonly
+            @click="genBindCode(s)"
+            :title="s.bind_code ? '点击重新生成' : '点击生成绑定码'"
+          />
           <span class="stu-initial">{{ initialOf(s) }}</span>
           <span v-if="!s.active" class="off-badge">已停用</span>
+          <button class="gmini" @click="openBindQr(s)">二维码</button>
+          <button v-if="s.bind_code" class="gmini danger" @click="unbindStudent(s)">解绑</button>
           <button class="gmini" @click="startEdit(s)">改名</button>
           <button v-if="s.active" class="gmini danger" @click="setActive(s, false)">停用</button>
           <button v-else class="gmini" @click="setActive(s, true)">恢复</button>
@@ -453,6 +551,27 @@ async function confirmImport() {
     </div>
   </Teleport>
 
+  <!-- 家长绑定二维码弹层：扫码 = 家长视图 + 学号 + 绑定码 自动绑定 -->
+  <Teleport to="body">
+    <div v-if="showBindQr" class="gbackdrop" @click.self="showBindQr = null">
+      <div class="gpop" style="text-align: center">
+        <h3 class="sec-title">{{ showBindQr.name }} · 家长绑定二维码</h3>
+        <p class="foot-note" style="margin: 0 0 10px">
+          家长微信/浏览器扫码 → 自动填入学号与绑定码 → 完成绑定。截图或打印后发给对应家长。
+        </p>
+        <img v-if="bindQrData" :src="bindQrData" alt="家长绑定二维码" style="width: min(280px, 72vw); border-radius: 12px" />
+        <div class="bind-code-banner num">{{ showBindQr.bind_code }}</div>
+        <p class="foot-note num">学号 {{ showBindQr.student_no || '—' }} · 绑定码 {{ showBindQr.bind_code }}</p>
+        <div class="head-row" style="justify-content: center; flex-wrap: wrap; margin-top: 10px">
+          <button class="gbtn" @click="copyBindLink">复制绑定链接</button>
+          <button class="gmini" @click="genBindCode(showBindQr)">重置绑定码</button>
+          <button class="gmini danger" @click="unbindStudent(showBindQr)">解绑全部设备</button>
+          <button class="gbtn primary" @click="showBindQr = null">完成</button>
+        </div>
+      </div>
+    </div>
+  </Teleport>
+
   <div v-if="toastMsg" class="gtoast">{{ toastMsg }}</div>
 </template>
 
@@ -514,6 +633,26 @@ async function confirmImport() {
   padding: 4px 8px;
   font-size: 12.5px;
   flex: none;
+}
+.code-input {
+  width: 88px;
+  padding: 4px 6px;
+  font-size: 12.5px;
+  flex: none;
+  text-align: center;
+  letter-spacing: 0.06em;
+  cursor: pointer;
+}
+.bind-code-banner {
+  display: inline-block;
+  margin: 10px auto 0;
+  padding: 6px 18px;
+  border-radius: 10px;
+  background: var(--primary-soft);
+  color: var(--primary);
+  font-size: 24px;
+  font-weight: 800;
+  letter-spacing: 0.18em;
 }
 .off-badge {
   font-size: 10.5px;

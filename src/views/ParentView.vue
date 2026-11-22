@@ -20,10 +20,11 @@ const STATUS: Record<string, { label: string; cls: string }> = {
   violate: { label: '违纪', cls: 'st-violate' },
 }
 
-/* ---------- 绑定孩子（学号）+ 给老师留言 ---------- */
+/* ---------- 绑定孩子（学号 + 绑定码 → 长效令牌）+ 给老师留言 ---------- */
 const RELATIONS = ['爸爸', '妈妈', '爷爷', '奶奶', '外公', '外婆', '其他']
 const bound = ref<{ id: number; name: string; no: string } | null>(null)
 const bindNo = ref('')
+const bindCode = ref('')
 const bindError = ref('')
 const bindBusy = ref(false)
 const relation = ref('妈妈')
@@ -37,34 +38,60 @@ const thread = ref<
 let threadAfter = 0
 let pollTimer: ReturnType<typeof setInterval> | null = null
 
-const LS_BIND = 'ark-pbind-'
+const LS_PTK = 'ark-ptk-'
 const LS_REL = 'ark-prel-'
+
+/** 家长绑定令牌（长效，存本机；解绑/重置码不影响已签发令牌） */
+function parentToken(): string {
+  return localStorage.getItem(LS_PTK + key.value) ?? ''
+}
+function setParentToken(t: string) {
+  if (t) localStorage.setItem(LS_PTK + key.value, t)
+  else localStorage.removeItem(LS_PTK + key.value)
+}
+
+/** 家长接口鉴权：令牌走 ?ptk= query（与教师登录的 Authorization 隔离） */
+function ptkQ(): string {
+  const t = parentToken()
+  return t ? `ptk=${encodeURIComponent(t)}` : ''
+}
 
 function rememberIdentity() {
   if (bound.value) {
-    localStorage.setItem(LS_BIND + key.value, JSON.stringify({ no: bound.value.no }))
+    localStorage.setItem(
+      LS_PTK + key.value + '-no',
+      JSON.stringify({ no: bound.value.no, name: bound.value.name }),
+    )
   }
   localStorage.setItem(LS_REL + key.value, relation.value)
 }
 
-/** 主接口加载：带学号时出勤个人化；以服务端回执 bound_student 为准（学号可能已失效） */
+/** 主接口加载：带令牌时出勤个人化；无令牌 → 全班脱敏视图 */
 async function load() {
   loading.value = true
   error.value = ''
   try {
-    const cur = bound.value
-    const q = cur ? `?no=${encodeURIComponent(cur.no)}` : ''
-    data.value = await get<any>(`/api/parent/${key.value}${q}`)
+    const q = ptkQ()
+    data.value = await get<any>(`/api/parent/${key.value}${q ? '?' + q : ''}`)
     const bs = data.value?.bound_student
-    if (cur && !bs) {
-      // 记住的学号已失效（被改/学生停用）→ 回到未绑定态
-      bound.value = null
-      localStorage.removeItem(LS_BIND + key.value)
-      bindError.value = '之前绑定的学号已失效，请重新输入'
-      examData.value = null
-    } else if (bs) {
-      bound.value = { id: bs.id, name: bs.name, no: cur?.no ?? '' }
+    if (bs) {
+      const noSaved = localStorage.getItem(LS_PTK + key.value + '-no')
+      let no = ''
+      try {
+        no = JSON.parse(noSaved ?? '{}')?.no ?? ''
+      } catch {
+        no = ''
+      }
+      bound.value = { id: bs.id, name: bs.name, no }
       loadExams()
+    } else {
+      // 令牌无效/未绑定 → 未绑定态（保留绑定框输入）
+      if (bound.value) {
+        bound.value = null
+        bindError.value = '绑定已失效，请重新绑定（学号 + 绑定码）'
+        examData.value = null
+      }
+      setParentToken('')
     }
   } catch (e: any) {
     error.value = e.message
@@ -78,14 +105,12 @@ const examData = ref<{ student: { name: string }; exams: any[] } | null>(null)
 const showAllExams = ref(false)
 
 async function loadExams() {
-  if (!bound.value?.no) {
+  if (!parentToken()) {
     examData.value = null
     return
   }
   try {
-    examData.value = await get<any>(
-      `/api/parent/${key.value}/exams?no=${encodeURIComponent(bound.value.no)}`,
-    )
+    examData.value = await get<any>(`/api/parent/${key.value}/exams?${ptkQ()}`)
   } catch {
     examData.value = null
   }
@@ -122,39 +147,42 @@ const examView = computed(() => {
 watch(key, () => {
   bound.value = null
   bindNo.value = ''
+  bindCode.value = ''
   bindError.value = ''
   // 身份来源优先级：入口页 ?rel= > 本机记住 > 默认妈妈
   const qRel = (route.query.rel as string) ?? ''
-  const saved = localStorage.getItem(LS_BIND + key.value)
   if (qRel && RELATIONS.includes(qRel)) relation.value = qRel
   else {
     const r = localStorage.getItem(LS_REL + key.value)
     if (r && RELATIONS.includes(r)) relation.value = r
     else relation.value = '妈妈'
   }
-  if (saved) {
-    try {
-      const b = JSON.parse(saved)
-      if (b?.no) bound.value = { id: 0, name: '', no: String(b.no) }
-    } catch {
-      /* 忽略坏数据 */
-    }
+  // 二维码扫码直达：?no=<学号>&bc=<绑定码> → 自动绑定
+  const qNo = (route.query.no as string) ?? ''
+  const qBc = (route.query.bc as string) ?? ''
+  if (qNo && qBc) {
+    bindParent(qNo.trim(), qBc.trim())
+    return
   }
+  if (parentToken()) bound.value = { id: 0, name: '', no: '' }
   load()
 }, { immediate: true })
 
-/** 输学号绑定：lookup 即时确认，防止留言到别人孩子头上 */
-async function bindByNo() {
-  const no = bindNo.value.trim()
-  if (!no || bindBusy.value) return
+/** 学号 + 绑定码 → 服务端校验并签发长效令牌 */
+async function bindParent(no: string, code: string) {
+  if (bindBusy.value) return
   bindError.value = ''
   bindBusy.value = true
   try {
-    const res = await get<{ student: { id: number; name: string } }>(
-      `/api/parent/${key.value}/lookup?no=${encodeURIComponent(no)}`,
+    const res = await post<{ token: string; student: { name: string; student_no: string } }>(
+      `/api/parent/${key.value}/bind`,
+      { student_no: no, bind_code: code },
     )
-    bound.value = { id: res.student.id, name: res.student.name, no }
+    setParentToken(res.token)
+    bound.value = { id: 0, name: res.student.name, no: res.student.student_no }
     rememberIdentity()
+    bindNo.value = ''
+    bindCode.value = ''
     await load()
   } catch (e: any) {
     bindError.value = e.message
@@ -163,24 +191,33 @@ async function bindByNo() {
   }
 }
 
+function bindNow() {
+  const no = bindNo.value.trim()
+  const code = bindCode.value.trim()
+  if (!no || !code) return
+  bindParent(no, code)
+}
+
+/** 更换 = 仅清除本机令牌（服务器令牌仍有效，老师可在名单里解绑） */
 function unbind() {
   bound.value = null
   bindNo.value = ''
-  localStorage.removeItem(LS_BIND + key.value)
+  bindCode.value = ''
+  setParentToken('')
   bindError.value = ''
   load()
 }
 
 async function loadThread() {
   // 家长只可见自己孩子相关的对话（自己发的留言 + 针对这些留言的老师回复）；未绑定不拉取
-  if (!bound.value?.no) {
+  if (!parentToken()) {
     thread.value = []
     threadAfter = 0
     return
   }
   try {
     const res = await get<{ messages: any[] }>(
-      `/api/parent/${key.value}/messages?no=${encodeURIComponent(bound.value.no)}&after=${threadAfter}`,
+      `/api/parent/${key.value}/messages?${ptkQ()}&after=${threadAfter}`,
     )
     if (threadAfter === 0) thread.value = res.messages
     else {
@@ -209,10 +246,9 @@ async function sendMsg() {
   msgError.value = ''
   sending.value = true
   try {
-    await post(`/api/parent/${key.value}/messages`, {
+    await post(`/api/parent/${key.value}/messages?${ptkQ()}`, {
       body,
       relation: relation.value,
-      student_no: bound.value.no,
     })
     msgBody.value = ''
     rememberIdentity()
@@ -299,33 +335,42 @@ const weeklyTotals = computed(() => {
       <section class="card msg-card">
         <h2>给老师留言</h2>
 
-        <!-- 未绑定：输学号 + 选身份 -->
+        <!-- 未绑定：学号 + 绑定码 双凭据 -->
         <div v-if="!bound" class="bind-box">
           <p class="hint" style="margin: 0 0 8px">
-            输入孩子的学号、选好你的身份完成绑定——之后这里显示 TA 的出勤，留言也署名给 TA：
+            输入孩子的<b>学号</b>和<b>绑定码</b>（老师发给你的两个数字/字母串）完成绑定——之后这里显示 TA 的出勤与成绩，留言也署名给 TA：
           </p>
           <div class="compose-row">
             <input
               v-model="bindNo"
               class="ginput bind-input"
-              placeholder="孩子的学号（问班主任要）"
+              placeholder="学号"
               maxlength="32"
-              @keyup.enter="bindByNo"
+              @keyup.enter="bindNow"
+            />
+            <input
+              v-model="bindCode"
+              class="ginput bind-code"
+              placeholder="绑定码"
+              maxlength="16"
+              @keyup.enter="bindNow"
             />
             <select v-model="relation" class="gselect bind-rel" @change="rememberIdentity">
               <option v-for="r in RELATIONS" :key="r" :value="r">{{ r }}</option>
             </select>
-            <button class="send-btn" :disabled="bindBusy || !bindNo.trim()" @click="bindByNo">
-              {{ bindBusy ? '查询中…' : '绑定' }}
+            <button class="send-btn" :disabled="bindBusy || !bindNo.trim() || !bindCode.trim()" @click="bindNow">
+              {{ bindBusy ? '绑定中…' : '绑定' }}
             </button>
           </div>
           <p v-if="bindError" class="err" style="margin: 8px 0 0">{{ bindError }}</p>
+          <p class="foot-note" style="margin: 10px 0 0">学号与绑定码请向班主任索取；也可以直接扫孩子带回家的绑定二维码。</p>
         </div>
 
         <!-- 已绑定 -->
         <div v-else class="bound-bar">
           <span class="bound-label">已绑定</span>
           <b class="bound-name">{{ bound.name }}</b>
+          <span v-if="bound.no" class="hint num">学号 {{ bound.no }}</span>
           <select v-model="relation" class="gselect rel-sel" @change="rememberIdentity">
             <option v-for="r in RELATIONS" :key="r" :value="r">{{ r }}</option>
           </select>
@@ -723,6 +768,11 @@ h2 {
 .bind-input {
   flex: 1;
   min-width: 0;
+}
+.bind-code {
+  flex: none;
+  width: 110px;
+  letter-spacing: 0.08em;
 }
 .bind-rel {
   flex: none;
