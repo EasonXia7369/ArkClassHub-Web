@@ -24,7 +24,7 @@ const STATUS: Record<string, { label: string; cls: string }> = {
 const RELATIONS = ['爸爸', '妈妈', '爷爷', '奶奶', '外公', '外婆', '其他']
 const bound = ref<{ id: number; name: string; no: string } | null>(null)
 const bindNo = ref('')
-const bindCode = ref('')
+const bindTail = ref('')
 const bindError = ref('')
 const bindBusy = ref(false)
 const relation = ref('妈妈')
@@ -147,7 +147,7 @@ const examView = computed(() => {
 watch(key, () => {
   bound.value = null
   bindNo.value = ''
-  bindCode.value = ''
+  bindTail.value = ''
   bindError.value = ''
   // 身份来源优先级：入口页 ?rel= > 本机记住 > 默认妈妈
   const qRel = (route.query.rel as string) ?? ''
@@ -157,32 +157,35 @@ watch(key, () => {
     if (r && RELATIONS.includes(r)) relation.value = r
     else relation.value = '妈妈'
   }
-  // 二维码扫码直达：?no=<学号>&bc=<绑定码> → 自动绑定
+  // 二维码扫码直达：?no=<学号> → 自动填学号，家长再输入身份证后六位完成绑定
   const qNo = (route.query.no as string) ?? ''
-  const qBc = (route.query.bc as string) ?? ''
-  if (qNo && qBc) {
-    bindParent(qNo.trim(), qBc.trim())
+  if (qNo) {
+    bindNo.value = qNo.trim()
+    if (parentToken()) {
+      bound.value = { id: 0, name: '', no: '' }
+      load()
+    }
     return
   }
   if (parentToken()) bound.value = { id: 0, name: '', no: '' }
   load()
 }, { immediate: true })
 
-/** 学号 + 绑定码 → 服务端校验并签发长效令牌 */
-async function bindParent(no: string, code: string) {
+/** 学号 + 身份证后六位 → 服务端 HMAC 校验并签发长效令牌 */
+async function bindParent(no: string, tail: string) {
   if (bindBusy.value) return
   bindError.value = ''
   bindBusy.value = true
   try {
     const res = await post<{ token: string; student: { name: string; student_no: string } }>(
       `/api/parent/${key.value}/bind`,
-      { student_no: no, bind_code: code },
+      { student_no: no, id_tail: tail },
     )
     setParentToken(res.token)
     bound.value = { id: 0, name: res.student.name, no: res.student.student_no }
     rememberIdentity()
     bindNo.value = ''
-    bindCode.value = ''
+    bindTail.value = ''
     await load()
   } catch (e: any) {
     bindError.value = e.message
@@ -193,16 +196,16 @@ async function bindParent(no: string, code: string) {
 
 function bindNow() {
   const no = bindNo.value.trim()
-  const code = bindCode.value.trim()
-  if (!no || !code) return
-  bindParent(no, code)
+  const tail = bindTail.value.trim()
+  if (!no || !tail) return
+  bindParent(no, tail)
 }
 
 /** 更换 = 仅清除本机令牌（服务器令牌仍有效，老师可在名单里解绑） */
 function unbind() {
   bound.value = null
   bindNo.value = ''
-  bindCode.value = ''
+  bindTail.value = ''
   setParentToken('')
   bindError.value = ''
   load()
@@ -335,10 +338,10 @@ const weeklyTotals = computed(() => {
       <section class="card msg-card">
         <h2>给老师留言</h2>
 
-        <!-- 未绑定：学号 + 绑定码 双凭据 -->
+        <!-- 未绑定：学号 + 身份证后六位 双凭据 -->
         <div v-if="!bound" class="bind-box">
           <p class="hint" style="margin: 0 0 8px">
-            输入孩子的<b>学号</b>和<b>绑定码</b>（老师发给你的两个数字/字母串）完成绑定——之后这里显示 TA 的出勤与成绩，留言也署名给 TA：
+            输入孩子的<b>学号</b>和<b>身份证后六位</b>（老师从学生档案核发给你的核验信息）完成绑定——之后这里显示 TA 的出勤与成绩，留言也署名给 TA：
           </p>
           <div class="compose-row">
             <input
@@ -349,21 +352,23 @@ const weeklyTotals = computed(() => {
               @keyup.enter="bindNow"
             />
             <input
-              v-model="bindCode"
+              v-model="bindTail"
               class="ginput bind-code"
-              placeholder="绑定码"
-              maxlength="16"
+              placeholder="身份证后六位"
+              maxlength="6"
               @keyup.enter="bindNow"
             />
             <select v-model="relation" class="gselect bind-rel" @change="rememberIdentity">
               <option v-for="r in RELATIONS" :key="r" :value="r">{{ r }}</option>
             </select>
-            <button class="send-btn" :disabled="bindBusy || !bindNo.trim() || !bindCode.trim()" @click="bindNow">
+            <button class="send-btn" :disabled="bindBusy || !bindNo.trim() || !bindTail.trim()" @click="bindNow">
               {{ bindBusy ? '绑定中…' : '绑定' }}
             </button>
           </div>
           <p v-if="bindError" class="err" style="margin: 8px 0 0">{{ bindError }}</p>
-          <p class="foot-note" style="margin: 10px 0 0">学号与绑定码请向班主任索取；也可以直接扫孩子带回家的绑定二维码。</p>
+          <p class="foot-note" style="margin: 10px 0 0">
+            身份证后六位仅用于身份核验：系统只保存不可逆的加密校验值，任何人（包括管理员）都无法查看或还原。也可以扫孩子带回家的绑定二维码，扫后填入后六位即可。
+          </p>
         </div>
 
         <!-- 已绑定 -->
@@ -508,7 +513,11 @@ const weeklyTotals = computed(() => {
         <p class="foot-note" style="margin: 10px 0 0">仅展示 {{ examData.student.name }} 的成绩与班级均值对比，不含排名。</p>
       </section>
 
-      <footer class="foot">方舟班级中心 · Ark Class Hub</footer>
+      <footer class="foot">
+        方舟班级中心 · Ark Class Hub ·
+        <router-link to="/terms">服务协议</router-link> ·
+        <router-link to="/privacy">隐私政策</router-link>
+      </footer>
     </template>
   </div>
 </template>

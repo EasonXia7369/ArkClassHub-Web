@@ -168,9 +168,26 @@ watch(tab, (t) => {
   if (t === 'ai') loadAiConfig()
 })
 onMounted(scrollTabIntoView)
-// 可用 tab 集变化（如校管理员无班级时）→ 当前 tab 不在列则回落到第一个；列表渲染后也滚一次
+// 可用 tab 集变化（如班级加载前/后 tab 列表增长）→ 优先保持当前 tab；
+// 当前 tab 不在列时优先回落到初始期望（route.query.tab 或 students），否则第一个。
+// 若初始期望 tab 因班级尚未加载而暂时不可用，标记 pending，待其出现后自动切回。
+const preferredTab = ((route.query.tab as Tab) ?? 'students') as Tab
+const preferredPending = ref(false)
 watch(tabs, (list) => {
-  if (list.length && !list.some((t) => t.key === tab.value)) tab.value = list[0].key
+  if (!list.length) return
+  if (preferredPending.value && list.some((t) => t.key === preferredTab)) {
+    tab.value = preferredTab
+    preferredPending.value = false
+    return
+  }
+  if (!list.some((t) => t.key === tab.value)) {
+    if (list.some((t) => t.key === preferredTab)) {
+      tab.value = preferredTab
+    } else {
+      tab.value = list[0].key
+      preferredPending.value = true
+    }
+  }
   scrollTabIntoView()
 }, { immediate: true })
 

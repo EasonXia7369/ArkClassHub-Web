@@ -9,7 +9,8 @@ export interface Student {
   seq: number
   pinyin_initial: string
   student_no?: string | null
-  bind_code?: string | null
+  /** 身份证后六位是否已录入（布尔回执；明文/哈希永不回传前端） */
+  has_id_tail?: number | boolean | null
   active: number
 }
 

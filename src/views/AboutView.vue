@@ -106,6 +106,8 @@ onMounted(async () => {
         <p class="line">© 2024-2026 MacroSTAR Studio All rights reserved.</p>
         <div class="links">
           <a href="https://macrostar.top/" target="_blank" rel="noopener">宏维星智智慧科技官网</a>
+        <router-link to="/terms">服务协议</router-link>
+          <router-link to="/privacy">隐私政策</router-link>
         </div>
       </div>
     </div>

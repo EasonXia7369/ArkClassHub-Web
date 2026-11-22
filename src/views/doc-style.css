@@ -1,0 +1,66 @@
+/* 法律文档页共享样式（用户协议/隐私政策） */
+.doc-page {
+  max-width: 760px;
+  margin: 0 auto;
+  padding: 40px 20px 60px;
+}
+.doc-head h1 {
+  margin: 0;
+  font-size: 26px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+.doc-meta {
+  margin: 10px 0 0;
+  font-size: 12.5px;
+  color: var(--faint);
+}
+.doc-body {
+  margin-top: 20px;
+  background: var(--panel-strong, rgba(255, 255, 255, 0.9));
+  border: 1px solid var(--line, rgba(0, 0, 0, 0.08));
+  border-radius: 16px;
+  padding: 26px 28px;
+  line-height: 1.85;
+  font-size: 14.5px;
+}
+.doc-body h2 {
+  font-size: 16px;
+  font-weight: 700;
+  margin: 26px 0 10px;
+}
+.doc-body p {
+  margin: 8px 0;
+  color: var(--text);
+}
+.doc-body .lead {
+  background: var(--primary-soft);
+  border-radius: 10px;
+  padding: 12px 14px;
+}
+.doc-body b {
+  color: var(--text);
+}
+.doc-body ul {
+  margin: 6px 0;
+  padding-left: 22px;
+}
+.doc-body li {
+  margin: 4px 0;
+}
+.doc-foot {
+  margin-top: 26px;
+  text-align: center;
+  color: var(--faint);
+  font-size: 12.5px;
+}
+.doc-foot a {
+  color: var(--primary);
+  text-decoration: none;
+}
+@media (max-width: 600px) {
+  .doc-body {
+    padding: 18px 16px;
+    font-size: 13.5px;
+  }
+}

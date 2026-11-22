@@ -66,38 +66,91 @@ async function setActive(s: any, active: boolean) {
   await refresh()
 }
 
-/* ---------- 家长绑定码/二维码（家长凭 学号+绑定码 绑定孩子） ---------- */
+/* ---------- 家长身份核验（学号 + 身份证后六位；HMAC 存储，明文/哈希均不回传） ---------- */
 
-/** 生成/重置单个学生的绑定码（重置不撤销已绑定家长）。 */
-async function genBindCode(s: any) {
+/** 录入/重置单个学生的身份证后六位（重置=重新录入，不撤销已绑定家长）。 */
+async function setIdTail(s: any, tail: string) {
   try {
-    const res = await post<{ bind_code: string }>(
-      `/api/classes/${store.current!.id}/students/${s.id}/bind-code`,
-      {},
-    )
+    await post(`/api/classes/${store.current!.id}/students/${s.id}/id-tail`, {
+      tail: tail.trim() || null,
+    })
     await refresh()
-    toast(`已生成 ${s.name} 的绑定码：${res.bind_code}`)
+    toast(tail.trim() ? `已录入 ${s.name} 的身份证后六位` : `已清除 ${s.name} 的身份核验信息`)
+    return true
   } catch (e: any) {
     error.value = e.message
+    return false
   }
 }
 
-/** 批量：给全部无码在读学生生成绑定码。 */
-const bulkCodeBusy = ref(false)
-async function genBindCodesBulk() {
-  if (bulkCodeBusy.value) return
-  bulkCodeBusy.value = true
+/** 批量录入弹窗：粘贴「学号 身份证后六位」两列（或按名单顺序单列） */
+const showIdTail = ref(false)
+const idTailText = ref('')
+const idTailParsed = ref<Array<{ stu: any; tail: string }> | null>(null)
+const idTailNote = ref('')
+const idTailBusy = ref(false)
+
+function parseIdTails() {
+  const rows = idTailText.value.split(/\r?\n/).map((l) => l.trim()).filter(Boolean)
+  const actives = store.students.filter((s) => s.active)
+  const byName = new Map(actives.map((s) => [s.name, s]))
+  const byNo = new Map(actives.map((s) => [s.student_no ?? '', s]))
+  const result: Array<{ stu: any; tail: string }> = []
+  const errors: string[] = []
+  const TAIL_RE = /^\d{5}[\dXx]$/
+  // 任一行带两列 → 整篇按「学号或姓名 核验值」匹配；否则纯核验值按名单顺序
+  const namedMode = rows.some((l) => l.split(/[\t,，\s]+/).filter(Boolean).length >= 2)
+  let orderIdx = 0
+  for (const line of rows) {
+    const parts = line.split(/[\t,，\s]+/).map((x) => x.trim()).filter(Boolean)
+    if (!parts.length) continue
+    let stu: any
+    let tail: string
+    if (namedMode) {
+      const tailPart = parts.find((p) => TAIL_RE.test(p.toUpperCase()))
+      const keyPart = parts.find((p) => p !== tailPart)
+      tail = (tailPart ?? '').toUpperCase()
+      stu = keyPart ? byName.get(keyPart) ?? byNo.get(keyPart) : null
+      if (!stu || !tail) {
+        errors.push(line)
+        continue
+      }
+    } else {
+      tail = parts[0].toUpperCase()
+      stu = actives[orderIdx++]
+      if (!stu) {
+        errors.push(`${line}（超出名单人数）`)
+        continue
+      }
+    }
+    result.push({ stu, tail })
+  }
+  idTailParsed.value = result
+  idTailNote.value = errors.length
+    ? `已忽略 ${errors.length} 行：${errors.slice(0, 3).join('；')}${errors.length > 3 ? '…' : ''}`
+    : namedMode
+      ? ''
+      : `按名单顺序填入前 ${result.length} 人`
+}
+
+async function confirmIdTails() {
+  if (!idTailParsed.value?.length) return
+  idTailBusy.value = true
+  error.value = ''
+  const count = idTailParsed.value.length
   try {
-    const res = await post<{ generated: number }>(
-      `/api/classes/${store.current!.id}/students/bind-codes/bulk`,
-      {},
-    )
+    await post(`/api/classes/${store.current!.id}/students/id-tails/bulk`, {
+      rows: idTailParsed.value.map((r) => ({ student_id: r.stu.id, tail: r.tail })),
+    })
     await refresh()
-    toast(`已为 ${res.generated} 名学生生成绑定码`)
+    showIdTail.value = false
+    idTailText.value = ''
+    idTailParsed.value = null
+    toast(`已录入 ${count} 名学生的身份核验信息`)
   } catch (e: any) {
     error.value = e.message
   } finally {
-    bulkCodeBusy.value = false
+    idTailBusy.value = false
   }
 }
 
@@ -113,7 +166,17 @@ async function unbindStudent(s: any) {
   }
 }
 
-/** 绑定二维码弹层：链接 = 家长视图 + 学号 + 绑定码，扫码自动完成绑定。 */
+/** 单个录入：弹输入框（身份证后六位，5 位数字 + 1 位数字或 X）。 */
+function openIdTailEdit(s: any) {
+  const tail = prompt(
+    `录入 ${s.name} 的身份证后六位（格式：5 位数字 + 1 位数字或 X）。\n仅用于家长身份核验，系统加密存储、任何人不可查看。留空并确定 = 清除。`,
+    '',
+  )
+  if (tail === null) return
+  setIdTail(s, tail)
+}
+
+/** 绑定二维码弹层：链接只携带学号上下文（身份证后六位由家长自行输入，不进二维码）。 */
 const showBindQr = ref<any>(null)
 const bindQrData = ref('')
 const bindLink = ref('')
@@ -121,10 +184,6 @@ const bindLink = ref('')
 let cachedParentKey = ''
 
 async function openBindQr(s: any) {
-  if (!s.bind_code) {
-    toast('该学生还没有绑定码，先生成')
-    return
-  }
   const pkey = cachedParentKey || (await (async () => {
     const detail = await get<any>(`/api/classes/${store.current!.id}`)
     cachedParentKey = detail.class?.parent_key ?? ''
@@ -135,9 +194,10 @@ async function openBindQr(s: any) {
     return
   }
   showBindQr.value = s
-  // 二维码链接固定用生产域名（桌面端/本地环境 location.origin 是 ark://app / localhost，手机扫不出）
+  // 二维码链接固定用生产域名（桌面端/本地环境 location.origin 是 ark://app / localhost，手机扫不出）；
+  // 只带学号上下文（身份证后六位不出现在二维码里）
   const origin = 'https://ach.macrostar.top'
-  bindLink.value = `${origin}/parent/${pkey}?no=${encodeURIComponent(s.student_no ?? '')}&bc=${s.bind_code}`
+  bindLink.value = `${origin}/parent/${pkey}?no=${encodeURIComponent(s.student_no ?? '')}`
   bindQrData.value = await QRCode.toDataURL(bindLink.value, { width: 320, margin: 2 })
 }
 
@@ -404,8 +464,8 @@ async function confirmImport() {
         maxlength="20"
         @keyup.enter="add"
       />
-      <button class="gbtn" :disabled="bulkCodeBusy" @click="genBindCodesBulk">
-        <Icon name="lock" :size="15" /> {{ bulkCodeBusy ? '生成中…' : '批量生成绑定码' }}
+      <button class="gbtn" @click="showIdTail = true; idTailText = ''; idTailParsed = null; idTailNote = ''">
+        <Icon name="lock" :size="15" /> 批量录入身份核验
       </button>
       <button class="gbtn" @click="showNos = true; nosText = ''; nosParsed = null; nosNote = ''">
         <Icon name="users" :size="15" /> 批量填学号
@@ -444,18 +504,16 @@ async function confirmImport() {
             @change="onNoChange(s, $event)"
             @keyup.enter="($event.target as HTMLInputElement).blur()"
           />
-          <input
-            class="ginput code-input"
-            :value="s.bind_code ?? ''"
-            placeholder="绑定码"
-            readonly
-            @click="genBindCode(s)"
-            :title="s.bind_code ? '点击重新生成' : '点击生成绑定码'"
-          />
           <span class="stu-initial">{{ initialOf(s) }}</span>
+          <span
+            class="idtail-badge"
+            :class="{ ok: s.has_id_tail }"
+            :title="s.has_id_tail ? '已录入身份证后六位（加密存储不可查看）' : '未录入'"
+          >{{ s.has_id_tail ? '已核验' : '未核验' }}</span>
           <span v-if="!s.active" class="off-badge">已停用</span>
           <button class="gmini" @click="openBindQr(s)">二维码</button>
-          <button v-if="s.bind_code" class="gmini danger" @click="unbindStudent(s)">解绑</button>
+          <button class="gmini" @click="openIdTailEdit(s)">录入</button>
+          <button v-if="s.has_id_tail" class="gmini danger" @click="unbindStudent(s)">解绑</button>
           <button class="gmini" @click="startEdit(s)">改名</button>
           <button v-if="s.active" class="gmini danger" @click="setActive(s, false)">停用</button>
           <button v-else class="gmini" @click="setActive(s, true)">恢复</button>
@@ -463,7 +521,7 @@ async function confirmImport() {
       </div>
     </div>
     <p class="foot-note" style="margin: 10px 2px 0">
-      学号给家长在「家长视图」链接里绑定孩子用（格式不限、班内唯一）；停用不是删除：历史考勤与作业记录保留，名单里不再显示；转学/退班用停用。
+      学号 + 身份证后六位是家长绑定的双凭据（后六位加密存储、任何人不可查看，二维码不含该信息）；停用不是删除：历史考勤与作业记录保留，名单里不再显示；转学/退班用停用。
     </p>
   </div>
 
@@ -551,20 +609,18 @@ async function confirmImport() {
     </div>
   </Teleport>
 
-  <!-- 家长绑定二维码弹层：扫码 = 家长视图 + 学号 + 绑定码 自动绑定 -->
+  <!-- 家长绑定二维码弹层：扫码只带学号上下文，身份证后六位由家长自行输入 -->
   <Teleport to="body">
     <div v-if="showBindQr" class="gbackdrop" @click.self="showBindQr = null">
       <div class="gpop" style="text-align: center">
         <h3 class="sec-title">{{ showBindQr.name }} · 家长绑定二维码</h3>
         <p class="foot-note" style="margin: 0 0 10px">
-          家长微信/浏览器扫码 → 自动填入学号与绑定码 → 完成绑定。截图或打印后发给对应家长。
+          家长微信/浏览器扫码 → 自动填入学号 → 输入身份证后六位完成绑定。二维码不含任何身份核验信息。
         </p>
         <img v-if="bindQrData" :src="bindQrData" alt="家长绑定二维码" style="width: min(280px, 72vw); border-radius: 12px" />
-        <div class="bind-code-banner num">{{ showBindQr.bind_code }}</div>
-        <p class="foot-note num">学号 {{ showBindQr.student_no || '—' }} · 绑定码 {{ showBindQr.bind_code }}</p>
+        <p class="foot-note num" style="margin-top: 10px">学号 {{ showBindQr.student_no || '—' }}</p>
         <div class="head-row" style="justify-content: center; flex-wrap: wrap; margin-top: 10px">
           <button class="gbtn" @click="copyBindLink">复制绑定链接</button>
-          <button class="gmini" @click="genBindCode(showBindQr)">重置绑定码</button>
           <button class="gmini danger" @click="unbindStudent(showBindQr)">解绑全部设备</button>
           <button class="gbtn primary" @click="showBindQr = null">完成</button>
         </div>
@@ -634,25 +690,17 @@ async function confirmImport() {
   font-size: 12.5px;
   flex: none;
 }
-.code-input {
-  width: 88px;
-  padding: 4px 6px;
-  font-size: 12.5px;
+.idtail-badge {
+  font-size: 10.5px;
+  color: var(--faint);
+  background: var(--field);
+  padding: 2px 8px;
+  border-radius: 999px;
   flex: none;
-  text-align: center;
-  letter-spacing: 0.06em;
-  cursor: pointer;
 }
-.bind-code-banner {
-  display: inline-block;
-  margin: 10px auto 0;
-  padding: 6px 18px;
-  border-radius: 10px;
-  background: var(--primary-soft);
-  color: var(--primary);
-  font-size: 24px;
-  font-weight: 800;
-  letter-spacing: 0.18em;
+.idtail-badge.ok {
+  color: var(--present);
+  background: var(--present-bg, rgba(52, 199, 89, 0.12));
 }
 .off-badge {
   font-size: 10.5px;
