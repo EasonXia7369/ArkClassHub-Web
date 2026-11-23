@@ -1,11 +1,14 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import dayjs from 'dayjs'
 import { get, post } from '@/api'
 import { SLOT_LABEL } from '@/utils/dates'
+import { CONSENT_VERSION, type ConsentState } from '@/utils/consent'
+import ConsentDialog from '@/components/ConsentDialog.vue'
 
 const route = useRoute()
+const router = useRouter()
 const key = computed(() => String(route.params.key))
 
 const data = ref<any>(null)
@@ -56,6 +59,61 @@ function ptkQ(): string {
   return t ? `ptk=${encodeURIComponent(t)}` : ''
 }
 
+/* ---------- 服务协议与隐私政策同意（家长侧） ---------- */
+/**
+ * 家长同意时机：进入页面即弹（未绑定也能浏览全班脱敏视图，同样属于使用服务）。
+ * - 未绑定：同意只记在本机（无账号可挂），记版本号；换设备会再弹一次
+ * - 已绑定：以服务端 parent_binds.consent_version 为准，同意即写库
+ * - 本机已同意后完成绑定：绑定成功时自动补写服务端记录，避免再弹一遍
+ */
+const LS_PCONSENT = 'ark-pconsent-'
+const localAgreed = ref(localStorage.getItem(LS_PCONSENT + key.value) === CONSENT_VERSION)
+const consent = ref<ConsentState | null>(null)
+const consentBusy = ref(false)
+const consentError = ref('')
+
+/** 需要弹同意框？ */
+const showConsent = computed(() => {
+  if (!data.value) return false // 主数据未到，先不弹（避免闪一下就消失）
+  if (bound.value && consent.value?.agreed) return false // 已绑定且已同意
+  if (!bound.value && localAgreed.value) return false // 未绑定但本机已同意
+  return true
+})
+
+function markLocalAgreed() {
+  localStorage.setItem(LS_PCONSENT + key.value, CONSENT_VERSION)
+  localAgreed.value = true
+}
+
+async function agreeConsent() {
+  if (consentBusy.value) return
+  consentBusy.value = true
+  consentError.value = ''
+  try {
+    if (bound.value && parentToken()) {
+      const res = await post<{ consent: ConsentState }>(
+        `/api/parent/${key.value}/consent?${ptkQ()}`,
+        { version: CONSENT_VERSION },
+      )
+      consent.value = res.consent
+    }
+    // 未绑定也记本机，绑定成功后会自动补写服务端
+    markLocalAgreed()
+  } catch (e: any) {
+    consentError.value = e.message
+  } finally {
+    consentBusy.value = false
+  }
+}
+
+/** 不同意 → 清除本机令牌并回到班级码入口（绑定记录仍在，可重新进入后再选） */
+function declineConsent() {
+  setParentToken('')
+  bound.value = null
+  consent.value = null
+  router.replace('/parent')
+}
+
 function rememberIdentity() {
   if (bound.value) {
     localStorage.setItem(
@@ -73,6 +131,7 @@ async function load() {
   try {
     const q = ptkQ()
     data.value = await get<any>(`/api/parent/${key.value}${q ? '?' + q : ''}`)
+    consent.value = data.value?.consent ?? null
     const bs = data.value?.bound_student
     if (bs) {
       const noSaved = localStorage.getItem(LS_PTK + key.value + '-no')
@@ -149,6 +208,9 @@ watch(key, () => {
   bindNo.value = ''
   bindTail.value = ''
   bindError.value = ''
+  // 换班级链接 → 本机同意状态按 key 重新读（不同班级视为不同服务入口）
+  localAgreed.value = localStorage.getItem(LS_PCONSENT + key.value) === CONSENT_VERSION
+  consent.value = null
   // 身份来源优先级：入口页 ?rel= > 本机记住 > 默认妈妈
   const qRel = (route.query.rel as string) ?? ''
   if (qRel && RELATIONS.includes(qRel)) relation.value = qRel
@@ -171,12 +233,25 @@ async function bindParent(no: string, tail: string) {
   bindError.value = ''
   bindBusy.value = true
   try {
-    const res = await post<{ token: string; student: { name: string; student_no: string } }>(
+    const res = await post<{ token: string; student: { name: string; student_no: string }; consent?: ConsentState }>(
       `/api/parent/${key.value}/bind`,
       { student_no: no, id_tail: tail },
     )
     setParentToken(res.token)
     bound.value = { id: 0, name: res.student.name, no: res.student.student_no }
+    // 新绑定记录未同意协议 → 记录服务端状态；若本机此前已同意过，立即补写，不再打扰
+    consent.value = res.consent ?? null
+    if (localAgreed.value) {
+      try {
+        const cr = await post<{ consent: ConsentState }>(
+          `/api/parent/${key.value}/consent?${ptkQ()}`,
+          { version: CONSENT_VERSION },
+        )
+        consent.value = cr.consent
+      } catch {
+        /* 补写失败则回落到弹框（load() 会同步为未同意） */
+      }
+    }
     rememberIdentity()
     bindNo.value = ''
     bindTail.value = ''
@@ -202,6 +277,7 @@ function unbind() {
   bindTail.value = ''
   setParentToken('')
   bindError.value = ''
+  consent.value = null
   load()
 }
 
@@ -513,6 +589,16 @@ const weeklyTotals = computed(() => {
         <router-link to="/privacy">隐私政策</router-link>
       </footer>
     </template>
+
+    <!-- 家长首次绑定（或协议改版后）强制同意：不勾选不能使用 -->
+    <ConsentDialog
+      v-if="showConsent"
+      :busy="consentBusy"
+      :error="consentError"
+      decline-text="不同意并返回"
+      @agree="agreeConsent"
+      @decline="declineConsent"
+    />
   </div>
 </template>
 

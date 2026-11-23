@@ -9,6 +9,7 @@ import { useNotify } from '@/composables/useNotify'
 import { isDesktop, desktopBridge, type ArkWebSyncState } from '@/utils/platform'
 import Icon from '@/components/Icon.vue'
 import BrandLogo from '@/components/BrandLogo.vue'
+import ConsentDialog from '@/components/ConsentDialog.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -133,6 +134,28 @@ function logout() {
   chat.reset()
   store.reset()
   router.replace('/login')
+}
+
+/* ---------- 服务协议与隐私政策同意（教师/管理员；学生一体机不适用） ---------- */
+const consentBusy = ref(false)
+const consentError = ref('')
+
+async function agreeConsent() {
+  if (consentBusy.value) return
+  consentBusy.value = true
+  consentError.value = ''
+  try {
+    await auth.agreeConsent()
+  } catch (e: any) {
+    consentError.value = e.message
+  } finally {
+    consentBusy.value = false
+  }
+}
+
+/** 不同意 → 登出并回到登录页（cookie/令牌一并清除，下次进入须重新选择） */
+function declineConsent() {
+  logout()
 }
 
 /* ---------- toast ---------- */
@@ -371,6 +394,16 @@ onBeforeUnmount(() => chat.reset())
     </Teleport>
 
     <div v-if="toastMsg" class="gtoast">{{ toastMsg }}</div>
+
+    <!-- 首次访问（或协议改版后）强制同意：不勾选不能进入 -->
+    <ConsentDialog
+      v-if="auth.needsConsent"
+      :busy="consentBusy"
+      :error="consentError"
+      decline-text="不同意并退出"
+      @agree="agreeConsent"
+      @decline="declineConsent"
+    />
   </div>
 </template>
 
