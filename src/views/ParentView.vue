@@ -289,8 +289,10 @@ async function loadThread() {
     return
   }
   try {
+    // 首拉不带 after（服务端据此返回全量）；之后才用游标增量拉，避免 id<=0 的历史被吞掉
+    const q = threadAfter > 0 ? `&after=${threadAfter}` : ''
     const res = await get<{ messages: any[] }>(
-      `/api/parent/${key.value}/messages?${ptkQ()}&after=${threadAfter}`,
+      `/api/parent/${key.value}/messages?${ptkQ()}${q}`,
     )
     if (threadAfter === 0) thread.value = res.messages
     else {

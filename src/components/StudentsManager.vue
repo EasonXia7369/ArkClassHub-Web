@@ -3,6 +3,7 @@ import { computed, ref } from 'vue'
 import { get, post, put } from '@/api'
 import { useClassStore } from '@/stores/class'
 import { pinyinInitial, initialOf } from '@/utils/pinyin'
+import { parentBindLink } from '@/utils/publicOrigin'
 import QRCode from 'qrcode'
 import Icon from '@/components/Icon.vue'
 
@@ -200,10 +201,9 @@ async function openBindQr(s: any) {
     return
   }
   showBindQr.value = s
-  // 二维码链接固定用生产域名（桌面端/本地环境 location.origin 是 ark://app / localhost，手机扫不出）；
-  // 只带学号上下文（身份证后六位不出现在二维码里）
-  const origin = 'https://ach.macrostar.top'
-  bindLink.value = `${origin}/parent/${pkey}?no=${encodeURIComponent(s.student_no ?? '')}`
+  // 链接域名走 publicOrigin()：优先 VITE_PUBLIC_ORIGIN，桌面壳/本地环境自动回落到生产域名
+  // （ark://app 与 localhost 手机扫不出）；只带学号上下文（身份证后六位不出现在二维码里）
+  bindLink.value = parentBindLink(pkey, s.student_no ?? '')
   bindQrData.value = await QRCode.toDataURL(bindLink.value, { width: 320, margin: 2 })
 }
 

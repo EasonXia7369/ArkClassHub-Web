@@ -10,6 +10,7 @@ import QRCode from 'qrcode'
 
 import { useClassStore } from '@/stores/class'
 import { dk, STATUS_META } from '@/utils/dates'
+import { parentLinkOf } from '@/utils/publicOrigin'
 import Icon from '@/components/Icon.vue'
 
 const router = useRouter()
@@ -324,7 +325,7 @@ async function saveTask() {
       const k = detail.class?.parent_key ?? detail.parent_key ?? null
       parentCode.value = detail.class?.class_code ?? detail.class_code ?? ''
       if (k) {
-        parentLink.value = 'https://ach.macrostar.top/parent/' + k
+        parentLink.value = parentLinkOf(k)
         parentQr.value = await QRCode.toDataURL(parentLink.value, { width: 160, margin: 1 })
         parentQrBig.value = await QRCode.toDataURL(parentLink.value, { width: 320, margin: 2 })
       } else {
@@ -345,7 +346,7 @@ async function saveTask() {
   async function genParentHere() {
     if (!store.current) return
     const res = await post('/api/classes/' + store.current.id + '/parent-link', {})
-    parentLink.value = 'https://ach.macrostar.top/parent/' + res.key
+    parentLink.value = parentLinkOf(res.key)
     parentCode.value = res.code ?? parentCode.value
     parentQr.value = await QRCode.toDataURL(parentLink.value, { width: 160, margin: 1 })
     parentQrBig.value = await QRCode.toDataURL(parentLink.value, { width: 320, margin: 2 })

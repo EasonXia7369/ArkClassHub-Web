@@ -31,6 +31,8 @@ export interface ClassInfo {
   legacy_sync_code?: string | null
   /** 每日寄语来源配置（JSON 字符串：{ source: 'builtin' } 或 { source: 'hitokoto', cats, max_length }） */
   quote_config?: string | null
+  /** 所属学校：服务端 SELECT c.* 会返回；创建教师时用它指定学校归属（缺失则服务端兜底猜 MIN(id)） */
+  school_id?: number | null
 }
 
 export const useClassStore = defineStore('class', () => {

@@ -19,6 +19,8 @@ interface Grade {
   sort: number
   class_count: number
   directors: string | null
+  /** 现有主任的教师 id（逗号分隔）：编辑器回显用，缺失会导致一保存就清空全部主任 */
+  director_ids?: string | null
 }
 interface SchoolClass {
   id: number
@@ -135,8 +137,13 @@ async function createClass() {
 
 function startDirectors(g: Grade) {
   dirEditing.value = g.id
-  // 现有主任按名字匹配教师 id（overview 返回的是名字串；简化：重新全选时用 picks 空集起步）
-  dirPicks.value = new Set()
+  // 回显现有主任：director_ids 是逗号分隔的教师 id 串（服务端 GROUP_CONCAT）。
+  // 空/缺失视为「暂无主任」，而非「清空后重建」——否则每次保存都会抹掉已有指派。
+  const ids = (g.director_ids ?? '')
+    .split(',')
+    .map((s) => Number(s.trim()))
+    .filter((n) => Number.isFinite(n) && n > 0)
+  dirPicks.value = new Set(ids)
 }
 
 async function saveDirectors(g: Grade) {

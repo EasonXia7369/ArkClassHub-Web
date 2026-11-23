@@ -4,6 +4,7 @@ import { useRoute } from 'vue-router'
 import { get, post, put, del } from '@/api'
 import { useAi } from '@/composables/useAi'
 import { saveFile } from '@/utils/platform'
+import { parentLinkOf } from '@/utils/publicOrigin'
 import { useAuthStore } from '@/stores/auth'
 import { useClassStore } from '@/stores/class'
 import StudentsManager from '@/components/StudentsManager.vue'
@@ -83,7 +84,7 @@ async function createAndAddTeacher() {
       : await post<{ user: { id: number; name: string } }>('/api/admin/users', {
           name,
           password: newTeacherPass.value,
-          school_id: (store.current as any).school_id,
+          school_id: store.current.school_id,
         })
     await post(`/api/classes/${store.current.id}/teachers`, { user_id: res.user.id })
     toastMsg.value = `教师「${res.user.name}」已创建并加入本班`
@@ -220,7 +221,7 @@ async function genParentLink() {
     const res = await post<{ key: string; code: string }>('/api/classes/' + store.current.id + '/parent-link', {})
     parentKey.value = res.key
     classCode.value = res.code
-    parentLink.value = 'https://ach.macrostar.top/parent/' + res.key
+    parentLink.value = parentLinkOf(res.key)
     parentQr.value = await QRCode.toDataURL(parentLink.value, { width: 320, margin: 2 })
     toast('家长链接与班级码已生成')
   } catch (e: any) {
@@ -279,7 +280,7 @@ async function refreshParentLink() {
     classCode.value = detail.class?.class_code ?? detail.class_code ?? ''
     if (k) {
       parentKey.value = k
-      parentLink.value = 'https://ach.macrostar.top/parent/' + k
+      parentLink.value = parentLinkOf(k)
       parentQr.value = await QRCode.toDataURL(parentLink.value, { width: 320, margin: 2 })
     } else {
       parentKey.value = ''

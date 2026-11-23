@@ -10,6 +10,7 @@ import { saveFile, saveOrShare } from '@/utils/platform'
 import { useAi } from '@/composables/useAi'
 import { maskZh } from '@/utils/mask'
 import { weekdayCn } from '@/utils/dates'
+import { parentLinkOf } from '@/utils/publicOrigin'
 import Icon from '@/components/Icon.vue'
 import ReportSheet from '@/components/report/ReportSheet.vue'
 import type { ReportVM } from '@/components/report/ReportSheet.vue'
@@ -107,7 +108,7 @@ async function load() {
       try {
         const detail = await get<any>(`/api/classes/${props.classId}`)
         const k = detail.class?.parent_key ?? detail.parent_key ?? null
-        if (k) parentCache.set(props.classId, await QRCode.toDataURL(`https://ach.macrostar.top/parent/${k}`, { width: 256, margin: 1 }))
+        if (k) parentCache.set(props.classId, await QRCode.toDataURL(parentLinkOf(k), { width: 256, margin: 1 }))
         else parentCache.set(props.classId, '')
       } catch {
         parentCache.set(props.classId, '')
