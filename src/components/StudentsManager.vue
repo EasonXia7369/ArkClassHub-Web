@@ -97,13 +97,14 @@ function parseIdTails() {
   const byNo = new Map(actives.map((s) => [s.student_no ?? '', s]))
   const result: Array<{ stu: any; tail: string }> = []
   const errors: string[] = []
-  const TAIL_RE = /^\d{5}[\dXx]$/
+  const TAIL_RE = /^\d{5}[\dX]$/
   // 任一行带两列 → 整篇按「学号或姓名 核验值」匹配；否则纯核验值按名单顺序
   const namedMode = rows.some((l) => l.split(/[\t,，\s]+/).filter(Boolean).length >= 2)
   let orderIdx = 0
-  for (const line of rows) {
+  rows.forEach((line, i) => {
     const parts = line.split(/[\t,，\s]+/).map((x) => x.trim()).filter(Boolean)
-    if (!parts.length) continue
+    if (!parts.length) return
+    const lineNo = i + 1
     let stu: any
     let tail: string
     if (namedMode) {
@@ -112,24 +113,29 @@ function parseIdTails() {
       tail = (tailPart ?? '').toUpperCase()
       stu = keyPart ? byName.get(keyPart) ?? byNo.get(keyPart) : null
       if (!stu || !tail) {
-        errors.push(line)
-        continue
+        // 错误提示只报行号与原因，绝不回显核验值本身
+        errors.push(`第 ${lineNo} 行${!stu ? '未匹配到学生' : '核验值格式不符'}`)
+        return
       }
     } else {
       tail = parts[0].toUpperCase()
       stu = actives[orderIdx++]
       if (!stu) {
-        errors.push(`${line}（超出名单人数）`)
-        continue
+        errors.push(`第 ${lineNo} 行超出名单人数`)
+        return
+      }
+      if (!TAIL_RE.test(tail)) {
+        errors.push(`第 ${lineNo} 行核验值格式不符`)
+        return
       }
     }
     result.push({ stu, tail })
-  }
+  })
   idTailParsed.value = result
   idTailNote.value = errors.length
     ? `已忽略 ${errors.length} 行：${errors.slice(0, 3).join('；')}${errors.length > 3 ? '…' : ''}`
     : namedMode
-      ? ''
+      ? `按「学号/姓名」匹配到 ${result.length} 人`
       : `按名单顺序填入前 ${result.length} 人`
 }
 
@@ -524,6 +530,43 @@ async function confirmImport() {
       学号 + 身份证后六位是家长绑定的双凭据（后六位加密存储、任何人不可查看，二维码不含该信息）；停用不是删除：历史考勤与作业记录保留，名单里不再显示；转学/退班用停用。
     </p>
   </div>
+
+  <!-- 批量录入身份核验弹窗：只报姓名与行号，不回显核验值 -->
+  <Teleport to="body">
+    <div v-if="showIdTail" class="gbackdrop" @click.self="showIdTail = false">
+      <div class="gpop" style="width: min(560px, 94vw)">
+        <h3 class="sec-title">批量录入身份核验</h3>
+        <p class="foot-note" style="margin: 8px 0 6px">
+          每行一条身份证后六位（5 位数字 + 1 位数字或 X），按名单顺序填入；也支持「学号 后六位」或「姓名 后六位」两列，按学号/姓名对号入座。核验值加密存储、任何人不可查看。
+        </p>
+        <textarea
+          v-model="idTailText"
+          class="gtextarea"
+          style="width: 100%; min-height: 160px"
+          placeholder="例如：&#10;123456&#10;65432X&#10;&#10;或：&#10;20250101 123456&#10;张三 65432X"
+          @input="parseIdTails"
+        ></textarea>
+        <p v-if="idTailNote" class="foot-note" style="margin: 6px 0 0">{{ idTailNote }}</p>
+        <div v-if="idTailParsed?.length" class="preview">
+          <span class="foot-note">将录入 <b>{{ idTailParsed.length }}</b> 名学生的身份核验信息：</span>
+          <div class="name-chips">
+            <span v-for="r in idTailParsed" :key="r.stu.id" class="name-chip">{{ r.stu.name }}</span>
+          </div>
+        </div>
+        <div class="import-acts">
+          <button class="gbtn" @click="showIdTail = false">取消</button>
+          <button
+            class="gbtn primary"
+            :disabled="idTailBusy || !idTailParsed?.length"
+            @click="confirmIdTails"
+          >
+            <Icon name="lock" :size="15" />
+            录入 {{ idTailParsed?.length || '' }} 人
+          </button>
+        </div>
+      </div>
+    </div>
+  </Teleport>
 
   <!-- 批量导入弹窗 -->
   <Teleport to="body">

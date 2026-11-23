@@ -158,15 +158,9 @@ watch(key, () => {
     else relation.value = '妈妈'
   }
   // 二维码扫码直达：?no=<学号> → 自动填学号，家长再输入身份证后六位完成绑定
+  // 注意：无论是否带 ?no= 都必须 load()，否则页面数据为空、整页只剩空壳
   const qNo = (route.query.no as string) ?? ''
-  if (qNo) {
-    bindNo.value = qNo.trim()
-    if (parentToken()) {
-      bound.value = { id: 0, name: '', no: '' }
-      load()
-    }
-    return
-  }
+  if (qNo) bindNo.value = qNo.trim()
   if (parentToken()) bound.value = { id: 0, name: '', no: '' }
   load()
 }, { immediate: true })
@@ -873,6 +867,29 @@ h2 {
   display: flex;
   gap: 8px;
   flex-wrap: wrap;
+}
+/* 手机端：学号/后六位各占半行，身份与按钮并排在下一行，避免输入框被挤到看不清 */
+@media (max-width: 560px) {
+  .compose-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+  }
+  .bind-input,
+  .bind-code {
+    width: 100%;
+    min-width: 0;
+  }
+  .bind-rel {
+    width: 100%;
+    min-width: 0;
+  }
+  .compose-row .send-btn {
+    width: 100%;
+  }
+  .thread-bubble {
+    max-width: 92%;
+  }
 }
 .compose-sel {
   flex: 1;
