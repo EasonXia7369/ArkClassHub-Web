@@ -198,6 +198,8 @@ const examView = computed(() => {
       score: v.score as number | null,
       full: v.full as number,
       avg: v.avg as number | null,
+      /** 学校官方校排名（仅当学校成绩单提供；系统自算的班内排名不对家长开放） */
+      schoolRank: (v.school_rank as number | null) ?? null,
       delta: deltaOf(ei, sub),
     })),
   }))
@@ -551,7 +553,7 @@ const weeklyTotals = computed(() => {
         <p v-else class="none">{{ bound ? bound.name + ' 本周全勤' : '本周全班全勤' }}</p>
       </section>
 
-      <!-- 考试成绩（绑定后可见：仅自己孩子，含班级均值对比，不含排名） -->
+      <!-- 考试成绩（绑定后可见：仅自己孩子，含班级均值对比与学校官方校排名） -->
       <section v-if="bound && examData" class="card">
         <h2>考试成绩<span class="bound-suffix"> · {{ examData.student.name }}</span></h2>
         <div v-if="examData.exams.length" class="exam-list">
@@ -570,6 +572,7 @@ const weeklyTotals = computed(() => {
                 <span class="num pexam-score">{{ row.score ?? '缺考' }}<i v-if="row.score !== null" class="pexam-full"> / {{ row.full }}</i></span>
                 <span class="hint num">
                   班级均分 {{ row.avg ?? '—' }}
+                  <b v-if="row.schoolRank !== null" class="rank-chip">校排名 {{ row.schoolRank }}</b>
                   <b v-if="row.delta !== null" :class="row.delta >= 0 ? 'delta-up' : 'delta-down'">
                     {{ row.delta >= 0 ? '↑' : '↓' }}{{ Math.abs(row.delta) }}
                   </b>
@@ -582,7 +585,9 @@ const weeklyTotals = computed(() => {
           </button>
         </div>
         <p v-else class="none">还没有考试记录</p>
-        <p class="foot-note" style="margin: 10px 0 0">仅展示 {{ examData.student.name }} 的成绩与班级均值对比，不含排名。</p>
+        <p class="foot-note" style="margin: 10px 0 0">
+          仅展示 {{ examData.student.name }} 的成绩、班级均分与学校官方校排名（若学校成绩单提供）；不显示班内排名。
+        </p>
       </section>
 
       <footer class="foot">
@@ -950,6 +955,15 @@ h2 {
 }
 .delta-down {
   color: var(--absent);
+}
+/* 校排名徽标：学校官方口径，与班级均分并列展示 */
+.rank-chip {
+  color: var(--primary);
+  background: var(--primary-soft);
+  border-radius: 999px;
+  padding: 1px 7px;
+  font-size: 11px;
+  font-weight: 600;
 }
 .compose-row {
   display: flex;

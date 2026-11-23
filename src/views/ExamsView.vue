@@ -127,23 +127,41 @@ async function openExam(id: number) {
 /* ---------- 录分（矩阵编辑） ---------- */
 const editing = ref(false)
 const draft = ref<Record<string, string>>({}) // `${studentId}|${subject}` -> 输入框内容
+/** 排名草稿：`${studentId}|${subject}|class` / `...|school` */
+const draftRank = ref<Record<string, string>>({})
+/** 是否显示排名录入列（有排名数据时自动展开，也可手动切换） */
+const showRankCols = ref(false)
 const saving = ref(false)
 
 function startEdit() {
   const d: Record<string, string> = {}
+  const r: Record<string, string> = {}
+  let hasRank = false
   for (const s of students.value) {
     for (const sub of exam.value.subjects) {
       const v = s.scores[sub.subject]
       d[`${s.id}|${sub.subject}`] = v === null || v === undefined ? '' : String(v)
+      const rk = s.ranks?.[sub.subject]
+      if (rk?.class != null) {
+        r[`${s.id}|${sub.subject}|class`] = String(rk.class)
+        hasRank = true
+      }
+      if (rk?.school != null) {
+        r[`${s.id}|${sub.subject}|school`] = String(rk.school)
+        hasRank = true
+      }
     }
   }
   draft.value = d
+  draftRank.value = r
+  if (hasRank) showRankCols.value = true
   editing.value = true
 }
 
 function exitEdit() {
   editing.value = false
   draft.value = {}
+  draftRank.value = {}
 }
 
 /** Excel 单列粘贴：从当前单元格向下填充同科分数 */
@@ -165,16 +183,27 @@ function onPaste(e: ClipboardEvent, studentId: number, subject: string) {
 
 async function saveScores() {
   if (!store.current || !exam.value || saving.value) return
-  const scores: Array<{ student_id: number; subject: string; score: number | null }> = []
+  const scores: Array<{
+    student_id: number
+    subject: string
+    score: number | null
+    class_rank?: number | null
+    school_rank?: number | null
+  }> = []
   for (const s of students.value) {
     for (const sub of exam.value.subjects) {
       const raw = (draft.value[`${s.id}|${sub.subject}`] ?? '').trim()
-      if (raw === '') {
-        scores.push({ student_id: s.id, subject: sub.subject, score: null })
-      } else {
-        const v = Number(raw)
-        scores.push({ student_id: s.id, subject: sub.subject, score: v })
-      }
+      const score = raw === '' ? null : Number(raw)
+      // 空分不提交排名（缺考无排名可言）
+      const cr = score === null ? null : Number(draftRank.value[`${s.id}|${sub.subject}|class`] ?? '') || null
+      const sr = score === null ? null : Number(draftRank.value[`${s.id}|${sub.subject}|school`] ?? '') || null
+      scores.push({
+        student_id: s.id,
+        subject: sub.subject,
+        score,
+        class_rank: cr,
+        school_rank: sr,
+      })
     }
   }
   saving.value = true
@@ -183,6 +212,7 @@ async function saveScores() {
     await put(`/api/classes/${store.current!.id}/exams/${exam.value.id}/scores`, { scores })
     toast('成绩已保存')
     editing.value = false
+    draftRank.value = {}
     await openExam(exam.value.id)
   } catch (e: any) {
     error.value = e.message
@@ -370,21 +400,39 @@ async function copyComment(sid: number) {
   }
 }
 
-/* ---------- 智能导入（AI 解析 → 预览确认 → 写入） ---------- */
+/* ---------- 智能导入：AI 解析 → 直接灌进录分矩阵（矩阵即预览） ---------- */
 const showImport = ref(false)
 const importText = ref('')
 const importBusy = ref(false)
 const importError = ref('')
-const parsed = ref<any>(null) // {subjects, rows}
+const importSummary = ref('')
 const fileInput = ref<HTMLInputElement | null>(null)
 
 function openImport() {
   showImport.value = true
   importText.value = ''
-  parsed.value = null
   importError.value = ''
+  importSummary.value = ''
 }
 
+/** 单元格取值：兼容富文本 / 公式 / 超链接 / 日期等 ExcelJS 值形态 */
+function cellText(v: any): string {
+  if (v === null || v === undefined) return ''
+  if (typeof v === 'object') {
+    if (Array.isArray(v.richText)) return v.richText.map((t: any) => t.text ?? '').join('').trim()
+    if ('text' in v) return String(v.text ?? '').trim()
+    if ('result' in v) return String(v.result ?? '').trim()
+    if ('formula' in v) return String(v.result ?? '').trim()
+    if (v instanceof Date) return v.toISOString().slice(0, 10)
+  }
+  return String(v).trim()
+}
+
+/**
+ * xlsx → TSV 文本。
+ * 关键：必须按列索引逐格取值（`getCell(c)`），不能用 `eachCell({includeEmpty:false})`——
+ * 后者会跳过空单元格，导致整行左移，表头与数据列号错位（成绩单常见「学籍号」整列为空）。
+ */
 async function onImportFile(e: Event) {
   const file = (e.target as HTMLInputElement).files?.[0]
   if (!file) return
@@ -397,13 +445,16 @@ async function onImportFile(e: Event) {
       const wb = new ExcelJS.Workbook()
       await wb.xlsx.load(await file.arrayBuffer())
       const ws = wb.worksheets[0]
+      // 先求整表最大列数（含表头合并区），保证每行列数一致、列号对齐
+      let maxCol = 0
+      ws.eachRow({ includeEmpty: true }, (row) => {
+        if (row.cellCount > maxCol) maxCol = row.cellCount
+      })
       const lines: string[] = []
-      ws.eachRow({ includeEmpty: false }, (row) => {
+      ws.eachRow({ includeEmpty: true }, (row) => {
         const cells: string[] = []
-        row.eachCell({ includeEmpty: false }, (cell) => {
-          const v = cell.value
-          cells.push(v === null || v === undefined ? '' : String(typeof v === 'object' && 'text' in (v as any) ? (v as any).text : v).trim())
-        })
+        for (let c = 1; c <= maxCol; c++) cells.push(cellText(row.getCell(c).value))
+        // 只裁掉行尾空列（保留行中空位，维持列对齐）
         while (cells.length && !cells[cells.length - 1]) cells.pop()
         if (cells.length) lines.push(cells.join('\t'))
       })
@@ -417,66 +468,67 @@ async function onImportFile(e: Event) {
   }
 }
 
+/**
+ * 解析并直接填入录分矩阵：
+ * 命中的学生 → 写入 draft 对应科目；未命中的行单独列出，让用户手工指认或忽略。
+ * 解析完立即进入编辑态，用户在矩阵里扫一眼即可保存（不再有第二层预览弹窗）。
+ */
 async function parseImport() {
-  if (!importText.value.trim() || importBusy.value) return
+  if (!importText.value.trim() || importBusy.value || !exam.value) return
   importBusy.value = true
   importError.value = ''
+  importSummary.value = ''
   try {
-    const res = await post<any>(`/api/classes/${store.current!.id}/exams/${exam.value!.id}/import-parse`, {
+    const res = await post<any>(`/api/classes/${store.current!.id}/exams/${exam.value.id}/import-parse`, {
       text: importText.value,
     })
-    parsed.value = res
-    toast(`解析完成：${res.total_matched}/${res.rows.length} 人自动匹配`)
+
+    // 进入编辑态（保留已有成绩作为底稿）
+    if (!editing.value) startEdit()
+
+    const examSubs: string[] = exam.value.subjects.map((s: any) => s.subject)
+    let filled = 0
+    let gotRank = false
+    const unmatched: string[] = []
+
+    for (const row of res.rows ?? []) {
+      if (!row.matched || !row.student_id) {
+        if (row.name) unmatched.push(row.name)
+        continue
+      }
+      for (const sub of examSubs) {
+        const sc = row.scores?.[sub]
+        if (sc === null || sc === undefined) continue
+        const num = Number(sc)
+        if (!Number.isFinite(num)) continue
+        draft.value[`${row.student_id}|${sub}`] = String(num)
+        filled++
+
+        // 排名同时写入草稿，并自动展开排名列（AI 解析出的排名是本轮新数据，
+        // startEdit 时 s.ranks 还是旧的空值，不能靠它判断）
+        const cr = row.class_ranks?.[sub]
+        const sr = row.school_ranks?.[sub]
+        if (cr !== null && cr !== undefined) {
+          draftRank.value[`${row.student_id}|${sub}|class`] = String(cr)
+          gotRank = true
+        }
+        if (sr !== null && sr !== undefined) {
+          draftRank.value[`${row.student_id}|${sub}|school`] = String(sr)
+          gotRank = true
+        }
+      }
+    }
+    if (gotRank) showRankCols.value = true
+
+    showImport.value = false
+    const parts = [`已填入 ${filled} 个分数`]
+    if (unmatched.length) parts.push(`${unmatched.length} 人未匹配：${unmatched.slice(0, 5).join('、')}${unmatched.length > 5 ? '…' : ''}`)
+    importSummary.value = parts.join('；')
+    toast(`解析完成，${parts[0]}——请在表格中核对后保存`)
   } catch (e: any) {
     importError.value = e.message
   } finally {
     importBusy.value = false
-  }
-}
-
-/** 预览里指认学生 */
-function assignStudent(row: any, sid: number | null) {
-  row.student_id = sid
-  row.matched = sid !== null
-}
-
-async function confirmImport() {
-  if (!parsed.value || !exam.value) return
-  // 合并：解析行覆盖对应学生对应科目（未匹配行跳过、科目限本场考试）
-  const subjectSet = new Set(exam.value.subjects.map((s: any) => s.subject))
-  const scores: Array<{ student_id: number; subject: string; score: number | null }> = []
-  for (const sub of exam.value.subjects) {
-    for (const s of students.value) {
-      const cur = s.scores[sub.subject]
-      scores.push({ student_id: s.id, subject: sub.subject, score: cur === null || cur === undefined ? null : cur })
-    }
-  }
-  let written = 0
-  for (const row of parsed.value.rows) {
-    if (!row.matched || !row.student_id) continue
-    for (const [sub, v] of Object.entries(row.scores)) {
-      if (!subjectSet.has(sub)) continue
-      if (v === null || v === undefined) continue
-      const num = Number(v)
-      if (!Number.isFinite(num)) continue
-      const target = scores.find((x) => x.student_id === row.student_id && x.subject === sub)
-      if (target) {
-        target.score = num
-        written++
-      }
-    }
-  }
-  saving.value = true
-  error.value = ''
-  try {
-    await put(`/api/classes/${store.current!.id}/exams/${exam.value.id}/scores`, { scores })
-    toast(`导入完成，写入 ${written} 个分数`)
-    showImport.value = false
-    await openExam(exam.value.id)
-  } catch (e: any) {
-    error.value = e.message
-  } finally {
-    saving.value = false
   }
 }
 </script>
@@ -645,45 +697,83 @@ async function confirmImport() {
 
       <!-- 成绩表 / 录分矩阵 -->
       <div class="table-scroll" style="margin-top: 14px">
-        <table class="gtable score-table">
+        <table class="gtable score-table" :class="{ 'with-rank': showRankCols }">
           <thead>
             <tr>
               <th style="width: 34px">#</th>
               <th style="text-align: left">姓名</th>
-              <th v-for="sub in exam.subjects" :key="sub.subject">{{ sub.subject }}</th>
+              <template v-for="sub in exam.subjects" :key="sub.subject">
+                <th>{{ sub.subject }}</th>
+                <template v-if="showRankCols">
+                  <th class="rank-th">班名</th>
+                  <th class="rank-th">校名</th>
+                </template>
+              </template>
               <th>总分</th>
-              <th v-if="!editing">排名</th>
+              <th v-if="!editing">班排</th>
             </tr>
           </thead>
           <tbody>
             <tr v-for="(s, i) in students" :key="s.id" :class="{ off: !s.active }">
               <td class="num">{{ s.seq }}</td>
               <td style="text-align: left">{{ s.name }}</td>
-              <td v-for="sub in exam.subjects" :key="sub.subject">
-                <template v-if="editing">
-                  <input
-                    v-model="draft[`${s.id}|${sub.subject}`]"
-                    class="ginput score-input num"
-                    inputmode="decimal"
-                    :placeholder="s.absent.includes(sub.subject) ? '缺考' : ''"
-                    @paste="onPaste($event, s.id, sub.subject)"
-                    @keydown.enter="($event.target as HTMLInputElement).blur()"
-                  />
+              <template v-for="sub in exam.subjects" :key="sub.subject">
+                <td>
+                  <template v-if="editing">
+                    <input
+                      v-model="draft[`${s.id}|${sub.subject}`]"
+                      class="ginput score-input num"
+                      inputmode="decimal"
+                      :placeholder="s.absent.includes(sub.subject) ? '缺考' : ''"
+                      @paste="onPaste($event, s.id, sub.subject)"
+                      @keydown.enter="($event.target as HTMLInputElement).blur()"
+                    />
+                  </template>
+                  <template v-else>
+                    <span v-if="s.scores[sub.subject] !== null" class="num">{{ fmt(s.scores[sub.subject]) }}</span>
+                    <span v-else class="absent-mark">缺考</span>
+                  </template>
+                </td>
+                <template v-if="showRankCols">
+                  <td class="rank-td">
+                    <input
+                      v-if="editing"
+                      v-model="draftRank[`${s.id}|${sub.subject}|class`]"
+                      class="ginput score-input num rank-input"
+                      inputmode="numeric"
+                      placeholder="—"
+                      @keydown.enter="($event.target as HTMLInputElement).blur()"
+                    />
+                    <span v-else class="num rank-val">{{ s.ranks?.[sub.subject]?.class ?? '—' }}</span>
+                  </td>
+                  <td class="rank-td">
+                    <input
+                      v-if="editing"
+                      v-model="draftRank[`${s.id}|${sub.subject}|school`]"
+                      class="ginput score-input num rank-input"
+                      inputmode="numeric"
+                      placeholder="—"
+                      @keydown.enter="($event.target as HTMLInputElement).blur()"
+                    />
+                    <span v-else class="num rank-val">{{ s.ranks?.[sub.subject]?.school ?? '—' }}</span>
+                  </td>
                 </template>
-                <template v-else>
-                  <span v-if="s.scores[sub.subject] !== null" class="num">{{ fmt(s.scores[sub.subject]) }}</span>
-                  <span v-else class="absent-mark">缺考</span>
-                </template>
-              </td>
+              </template>
               <td class="num"><b>{{ fmt(s.total) }}</b></td>
               <td v-if="!editing" class="num">{{ s.rank ?? '—' }}</td>
             </tr>
           </tbody>
         </table>
       </div>
-      <p v-if="editing" class="foot-note" style="margin-top: 8px">
-        留空 = 缺考（不计入统计）。支持从 Excel 复制一列分数，在第一格直接粘贴，自动向下填充；保存前请核对。
-      </p>
+      <div v-if="editing" class="foot-note" style="margin-top: 8px">
+        <p style="margin: 0">
+          留空 = 缺考（不计入统计）。支持从 Excel 复制一列分数，在第一格直接粘贴，自动向下填充。
+          <button class="gmini" style="margin-left: 6px" @click="showRankCols = !showRankCols">
+            {{ showRankCols ? '隐藏排名列' : '显示排名列（班名/校名）' }}
+          </button>
+        </p>
+        <p v-if="importSummary" class="ok-text" style="margin: 6px 0 0">{{ importSummary }}</p>
+      </div>
 
       <!-- 趋势折线 -->
       <div v-if="trendPoints" style="margin-top: 18px">
@@ -771,78 +861,38 @@ async function confirmImport() {
     </div>
   </Teleport>
 
-  <!-- 智能导入弹层：粘贴/文件 → AI 解析 → 预览确认 → 写入 -->
+  <!-- 智能导入：粘贴/上传 → AI 解析 → 直接填入下方录分矩阵（矩阵即预览） -->
   <Teleport to="body">
     <div v-if="showImport" class="gbackdrop" @click.self="showImport = false">
-      <div class="gpop" style="width: min(760px, 96vw)">
+      <div class="gpop" style="width: min(720px, 96vw)">
         <h3 class="sec-title">智能导入成绩 · {{ exam?.name }}</h3>
         <p class="foot-note" style="margin: 0 0 8px">
-          支持 Excel/CSV 上传或直接粘贴成绩单原文，格式任意（AI 解析）。
+          上传 Excel/CSV 或直接粘贴成绩单原文，格式任意（AI 解析）。
+          支持「分数 / 班名 / 校名」多列科目组的成绩单，分数与排名会一并填入表格。
           <b class="err">解析请求将发送至 AI 服务（含学生姓名）。</b>
         </p>
         <textarea
           v-model="importText"
           class="gtextarea"
-          style="width: 100%; min-height: 140px"
-          placeholder="例如：&#10;姓名	语文	数学	英语	(总分)&#10;陈一	92	88	95&#10;王二	76	缺考	81"
-          @keydown.enter.exact.prevent="parseImport"
+          style="width: 100%; min-height: 150px"
+          placeholder="直接粘贴整张成绩单，或点下方「上传 Excel/CSV」&#10;（可含三行表头、学籍号、班级排名、校排名等列）"
         ></textarea>
         <div class="row" style="margin-top: 8px">
           <button class="gmini" @click="fileInput?.click()"><Icon name="upload" :size="13" /> 上传 Excel/CSV</button>
           <input ref="fileInput" type="file" accept=".xlsx,.csv,.txt" hidden @change="onImportFile" />
-          <button class="gbtn primary" style="margin-left: auto" :disabled="importBusy || !importText.trim()" @click="parseImport">
-            {{ importBusy ? 'AI 解析中…' : 'AI 解析' }}
+          <button
+            class="gbtn primary"
+            style="margin-left: auto"
+            :disabled="importBusy || !importText.trim()"
+            @click="parseImport"
+          >
+            {{ importBusy ? 'AI 解析中…' : '解析并填入表格' }}
           </button>
         </div>
         <p v-if="importError" class="err" style="margin: 8px 0 0">{{ importError }}</p>
-
-        <!-- 预览确认 -->
-        <template v-if="parsed">
-          <h3 class="sec-title" style="margin-top: 16px">
-            预览确认 <em>自动匹配 {{ parsed.total_matched }}/{{ parsed.rows.length }} 人</em>
-          </h3>
-          <div class="table-scroll" style="max-height: 340px">
-            <table class="gtable">
-              <thead>
-                <tr>
-                  <th style="text-align: left">原文姓名</th>
-                  <th style="text-align: left">对应学生</th>
-                  <th v-for="s in parsed.subjects" :key="s.subject">{{ s.subject }}<br /><span class="hint">满分 {{ s.full }}</span></th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr v-for="(row, ri) in parsed.rows" :key="ri" :class="{ 'unmatched-row': !row.matched }">
-                  <td style="text-align: left">{{ row.name }}</td>
-                  <td>
-                    <select
-                      class="gselect"
-                      style="width: auto; min-width: 96px"
-                      :class="{ 'unmatched-sel': !row.matched }"
-                      @change="assignStudent(row, Number(($event.target as HTMLSelectElement).value) || null)"
-                    >
-                      <option :value="null" :selected="row.student_id === null">— 指认学生 —</option>
-                      <option v-for="s in students" :key="s.id" :value="s.id" :selected="row.student_id === s.id">{{ s.name }}</option>
-                    </select>
-                  </td>
-                  <td v-for="(s, si) in parsed.subjects" :key="s.subject">
-                    <input
-                      class="ginput score-input num"
-                      :value="row.scores[s.subject] ?? ''"
-                      @input="row.scores[s.subject] = ($event.target as HTMLInputElement).value === '' ? null : Number(($event.target as HTMLInputElement).value)"
-                      @change="parsed.subjects[si].subject = parsed.subjects[si].subject"
-                    />
-                  </td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-          <div class="head-row" style="justify-content: flex-end; margin-top: 12px">
-            <button class="gbtn" @click="parsed = null">重新解析</button>
-            <button class="gbtn primary" :disabled="saving || !parsed.rows.some((r: any) => r.matched)" @click="confirmImport">
-              {{ saving ? '写入中…' : '确认写入成绩' }}
-            </button>
-          </div>
-        </template>
+        <p class="foot-note" style="margin: 10px 0 0">
+          解析结果会直接写入下方录分表格，关闭本窗口即可逐格核对、改错，确认无误后点「保存成绩」。
+        </p>
       </div>
     </div>
   </Teleport>
@@ -1073,10 +1123,31 @@ tr.off td {
   background: var(--primary);
   transition: width 0.3s var(--ease-spring);
 }
-.unmatched-row td {
-  background: var(--absent-bg);
+/* 排名列（班名 / 校名）：窄列、弱化底色，与分数列区分 */
+.rank-th {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--muted);
+  background: var(--field);
 }
-.unmatched-sel {
-  border-color: var(--absent);
+.rank-td {
+  padding-left: 2px;
+  padding-right: 2px;
+}
+.rank-input {
+  width: 46px;
+  min-width: 0;
+  padding: 6px 4px;
+  font-size: 12.5px;
+  text-align: center;
+  color: var(--muted);
+}
+.rank-val {
+  font-size: 12px;
+  color: var(--muted);
+}
+/* 排名列打开后，分数输入框收窄，避免表格过宽 */
+.score-table.with-rank .score-input:not(.rank-input) {
+  width: 58px;
 }
 </style>
