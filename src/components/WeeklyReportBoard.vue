@@ -120,7 +120,11 @@ async function load() {
   }
 }
 
-watch([from, to, () => props.classId], load, { immediate: true })
+watch([from, to, () => props.classId], async () => {
+  await load()
+  // 数据加载完 → 尝试拉取上次的 AI 生成结果（不调 AI），有就展示
+  await Promise.all([loadCachedSummary(), loadCachedDiagnosis()])
+}, { immediate: true })
 
 /* ---------- 脱敏开关 ---------- */
 const masked = ref(false)
@@ -252,18 +256,29 @@ function buildCompare() {
 const aiText = ref('')
 const aiBusy = ref(false)
 const aiError = ref('')
+/** 结果是否来自缓存（上次生成、数据未变）；false 表示刚重新生成 */
+const aiCached = ref(false)
 const diagnosis = ref<ReportVM['diagnosis']>(null)
 const diagBusy = ref(false)
 const diagError = ref('')
+const diagCached = ref(false)
 
-async function genSummary() {
+/**
+ * 生成周总结。`force=false` 时服务端会先查缓存——数据没变直接返回上次结果，
+ * 不消耗 AI 额度；只有数据变了或用户点「重新生成」才真正调用模型。
+ */
+async function genSummary(force = false) {
   if (aiBusy.value) return
   aiBusy.value = true
   aiError.value = ''
-  aiText.value = ''
+  if (force) aiText.value = ''
   try {
-    const res = await post<{ text: string }>(`/api/classes/${props.classId}/report/summary`, { from: from.value, to: to.value })
+    const res = await post<{ text: string; cached?: boolean }>(
+      `/api/classes/${props.classId}/report/summary`,
+      { from: from.value, to: to.value, force },
+    )
     aiText.value = res.text
+    aiCached.value = !!res.cached
   } catch (e: any) {
     aiError.value = e.message
   } finally {
@@ -271,21 +286,54 @@ async function genSummary() {
   }
 }
 
-async function genDiagnosis() {
+/** 页面加载/切区间时拉取已缓存的结果（不触发 AI 调用）。 */
+async function loadCachedSummary() {
+  if (aiBusy.value) return
+  try {
+    const res = await get<{ text: string | null; cached?: boolean }>(
+      `/api/classes/${props.classId}/report/summary?from=${from.value}&to=${to.value}`,
+    )
+    if (res.text) {
+      aiText.value = res.text
+      aiCached.value = true
+    }
+  } catch {
+    /* 缓存读取失败静默：用户仍可手动生成 */
+  }
+}
+
+async function genDiagnosis(force = false) {
   if (diagBusy.value || !examDetail.value) return
   diagBusy.value = true
   diagError.value = ''
-  diagnosis.value = null
+  if (force) diagnosis.value = null
   try {
-    const res = await post<{ summary: ReportVM['diagnosis'] }>(
+    const res = await post<{ summary: ReportVM['diagnosis']; cached?: boolean }>(
       `/api/classes/${props.classId}/exams/${examDetail.value.exam.id}/summary`,
-      {},
+      { force },
     )
     diagnosis.value = res.summary
+    diagCached.value = !!res.cached
   } catch (e: any) {
     diagError.value = e.message
   } finally {
     diagBusy.value = false
+  }
+}
+
+/** 读取已缓存的考试诊断（不触发 AI）。 */
+async function loadCachedDiagnosis() {
+  if (!examDetail.value || diagBusy.value) return
+  try {
+    const res = await get<{ summary: ReportVM['diagnosis'] | null; cached?: boolean }>(
+      `/api/classes/${props.classId}/exams/${examDetail.value.exam.id}/summary`,
+    )
+    if (res.summary) {
+      diagnosis.value = res.summary
+      diagCached.value = true
+    }
+  } catch {
+    /* 静默 */
   }
 }
 
@@ -435,11 +483,11 @@ async function exportXlsxReport() {
 
       <span class="spacer" />
 
-      <button v-if="aiEnabled" class="gmini ai-btn" :disabled="aiBusy || loading" @click="genSummary">
-        <Icon name="sparkles" :size="14" /> {{ aiBusy ? '生成中…' : 'AI 总结' }}
+      <button v-if="aiEnabled" class="gmini ai-btn" :disabled="aiBusy || loading" @click="genSummary(aiText ? true : false)">
+        <Icon name="sparkles" :size="14" /> {{ aiBusy ? '生成中…' : aiText ? '重新生成' : 'AI 总结' }}
       </button>
-      <button v-if="aiEnabled && examDetail" class="gmini ai-btn" :disabled="diagBusy || loading" @click="genDiagnosis">
-        <Icon name="sparkles" :size="14" /> {{ diagBusy ? '分析中…' : 'AI 考试诊断' }}
+      <button v-if="aiEnabled && examDetail" class="gmini ai-btn" :disabled="diagBusy || loading" @click="genDiagnosis(!!diagnosis)">
+        <Icon name="sparkles" :size="14" /> {{ diagBusy ? '分析中…' : diagnosis ? '重新诊断' : 'AI 考试诊断' }}
       </button>
       <button class="gbtn" :disabled="!report || loading" @click="exportXlsxReport"><Icon name="download" :size="15" /> Excel</button>
       <button class="gbtn primary" :disabled="!report || loading || exporting" @click="exportImage">
@@ -449,6 +497,7 @@ async function exportXlsxReport() {
 
     <p v-if="aiError || diagError" class="ai-error">{{ aiError || diagError }}</p>
     <div v-if="aiText" class="ai-copy card">
+      <p v-if="aiCached" class="ai-cached-tag">已保存的生成结果（数据未变，不会重复消耗额度）</p>
       <p class="ai-text">{{ aiText }}</p>
       <button class="gmini" @click="copyAiText">{{ toastMsg || '复制' }}</button>
     </div>
@@ -482,6 +531,16 @@ async function exportXlsxReport() {
 .ai-error { color: #ff3b30; font-size: 14px; margin: 0; }
 .ai-copy { display: flex; align-items: flex-start; gap: 12px; padding: 14px 18px; }
 .ai-copy .ai-text { flex: 1; margin: 0; white-space: pre-wrap; line-height: 1.7; }
+/* 缓存标识：告诉用户这是上次结果，没有重复消耗额度 */
+.ai-cached-tag {
+  margin: 0 0 8px;
+  font-size: 11.5px;
+  color: var(--muted);
+  background: var(--field);
+  border-radius: 8px;
+  padding: 4px 10px;
+  display: inline-block;
+}
 .pad { padding: 32px; }
 .center { text-align: center; color: var(--muted, #6e6e73); }
 .sheet-wrap { display: flex; justify-content: center; }

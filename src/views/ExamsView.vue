@@ -116,6 +116,10 @@ async function openExam(id: number) {
     students.value = res.students
     stats.value = res.stats
     exitEdit()
+    // 重置上一场考试的 AI 总结，再拉本场已缓存的（不触发 AI）
+    aiSummary.value = null
+    aiSumCached.value = false
+    loadCachedSummary()
     loadTrends()
   } catch (e: any) {
     error.value = e.message
@@ -279,23 +283,44 @@ const trendPoints = computed(() => {
 const fmt = (v: number | null | undefined) =>
   v === null || v === undefined ? '—' : Number.isInteger(v) ? String(v) : v.toFixed(1)
 
-/* ---------- AI 考试总结（结构化分块） ---------- */
+/* ---------- AI 考试总结（结构化分块；结果缓存，数据未变不重复消耗额度） ---------- */
 const aiSummary = ref<any>(null)
 const aiSumBusy = ref(false)
 const aiSumError = ref('')
+const aiSumCached = ref(false)
 
-async function genSummary() {
+async function genSummary(force = false) {
   if (aiSumBusy.value || !exam.value) return
   aiSumBusy.value = true
   aiSumError.value = ''
-  aiSummary.value = null
+  if (force) aiSummary.value = null
   try {
-    const res = await post<{ summary: any }>(`/api/classes/${store.current!.id}/exams/${exam.value.id}/summary`, {})
+    const res = await post<{ summary: any; cached?: boolean }>(
+      `/api/classes/${store.current!.id}/exams/${exam.value.id}/summary`,
+      { force },
+    )
     aiSummary.value = res.summary
+    aiSumCached.value = !!res.cached
   } catch (e: any) {
     aiSumError.value = e.message
   } finally {
     aiSumBusy.value = false
+  }
+}
+
+/** 打开考试时读取上次的总结（不触发 AI 调用）。 */
+async function loadCachedSummary() {
+  if (!exam.value) return
+  try {
+    const res = await get<{ summary: any; cached?: boolean }>(
+      `/api/classes/${store.current!.id}/exams/${exam.value.id}/summary`,
+    )
+    if (res.summary) {
+      aiSummary.value = res.summary
+      aiSumCached.value = true
+    }
+  } catch {
+    /* 静默 */
   }
 }
 
@@ -608,8 +633,9 @@ async function parseImport() {
       </div>
       <template v-if="!editing">
         <template v-if="aiEnabled">
-          <button class="gbtn ai-act" :disabled="aiSumBusy" @click="genSummary">
-            <Icon name="quote" :size="15" /> {{ aiSumBusy ? '总结生成中…' : 'AI 总结' }}
+          <button class="gbtn ai-act" :disabled="aiSumBusy" @click="genSummary(!!aiSummary)">
+            <Icon name="quote" :size="15" />
+            {{ aiSumBusy ? '总结生成中…' : aiSummary ? '重新总结' : 'AI 总结' }}
           </button>
           <button class="gbtn ai-act" @click="openComments"><Icon name="users" :size="15" /> AI 点评</button>
           <button class="gbtn ai-act" @click="openImport"><Icon name="upload" :size="15" /> 智能导入</button>
@@ -634,6 +660,7 @@ async function parseImport() {
       <p v-if="aiSumBusy" class="empty" style="padding: 6px 0">AI 正在分析本场考试…</p>
       <p v-else-if="aiSumError" class="err" style="padding: 4px 0">{{ aiSumError }}</p>
       <template v-else-if="aiSummary">
+        <p v-if="aiSumCached" class="ai-cached-tag">已保存的生成结果（成绩未变，不会重复消耗额度）</p>
         <p class="ai-overall">{{ aiSummary.overall }}</p>
         <div class="ai-blocks">
           <div class="ai-block">
@@ -1042,6 +1069,16 @@ tr.off td {
   margin: 8px 0 10px;
   font-size: 14px;
   line-height: 1.8;
+}
+/* 缓存标识：说明这是上次生成的结果，数据未变 */
+.ai-cached-tag {
+  margin: 0 0 8px;
+  font-size: 11.5px;
+  color: var(--muted);
+  background: var(--field);
+  border-radius: 8px;
+  padding: 4px 10px;
+  display: inline-block;
 }
 .ai-blocks {
   display: grid;
