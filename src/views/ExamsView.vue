@@ -4,13 +4,14 @@ import { get, post, put, del } from '@/api'
 import { useClassStore } from '@/stores/class'
 import { useAi } from '@/composables/useAi'
 import Icon from '@/components/Icon.vue'
+import TrendChart from '@/components/TrendChart.vue'
 
 const store = useClassStore()
 const { aiEnabled, ensureStatus } = useAi()
 ensureStatus()
 
 /* ---------- 视图状态 ---------- */
-const view = ref<'list' | 'exam'>('list')
+const view = ref<'list' | 'exam' | 'trends'>('list')
 const exams = ref<any[]>([])
 const loading = ref(false)
 const error = ref('')
@@ -329,6 +330,127 @@ const trendPoints = computed(() => {
 const fmt = (v: number | null | undefined) =>
   v === null || v === undefined ? '—' : Number.isInteger(v) ? String(v) : v.toFixed(1)
 
+/* ---------- 趋势分析视图（全班一张图 + 点击学生看个人） ---------- */
+/** 各科配色（循环使用，与主题协调） */
+const SUBJECT_COLORS = [
+  '#0a84ff', // 蓝
+  '#30d158', // 绿
+  '#ff9f0a', // 橙
+  '#bf5af2', // 紫
+  '#ff375f', // 红
+  '#40c8e0', // 青
+  '#ffd60a', // 黄
+  '#64a2ff', // 浅蓝
+]
+
+const trendLoading = ref(false)
+const trendError = ref('')
+/** 全班趋势数据（与 loadTrends 共用 trends） */
+const trendSubjectOrder = computed<string[]>(() => {
+  if (!trends.value?.series?.length) return []
+  // 取最后一场考试的科目顺序（最新的完整科目集）
+  const last = trends.value.series[trends.value.series.length - 1]
+  return (last?.subjects ?? []).map((s: any) => s.subject)
+})
+
+/** 全班：各科均分 + 总分均分，画在同一张图（按得分率归一化） */
+const classTrend = computed(() => {
+  if (!trends.value?.series?.length) return null
+  const series = trends.value.series
+  const labels = series.map((s: any) => s.name)
+  const subs = trendSubjectOrder.value
+  if (!subs.length) return null
+
+  const out: Array<{
+    name: string
+    color: string
+    values: Array<number | null>
+    fulls: number[]
+    dashed?: boolean
+    width?: number
+  }> = []
+
+  subs.forEach((sub, i) => {
+    out.push({
+      name: sub,
+      color: SUBJECT_COLORS[i % SUBJECT_COLORS.length],
+      values: series.map((s: any) => s.subjectAvgs?.[sub] ?? null),
+      fulls: series.map((s: any) => s.subjects?.find((x: any) => x.subject === sub)?.full ?? 100),
+    })
+  })
+
+  // 总分线：实线加粗，与科目区分
+  out.push({
+    name: '总分',
+    color: 'var(--text)',
+    values: series.map((s: any) => s.totalAvg ?? null),
+    fulls: series.map((s: any) => s.totalFull ?? 100),
+    width: 3,
+  })
+
+  return { labels, series: out, examCount: series.length }
+})
+
+/** 单个学生：拆成「各科」与「总分」两组，分两张图画（各科满分不同、总分是另一个量纲） */
+function studentTrendOf(sid: number) {
+  if (!trends.value?.series?.length) return null
+  const stu = trends.value.students.find((s: any) => s.id === sid)
+  if (!stu) return null
+  const series = trends.value.series
+  const labels = series.map((s: any) => s.name)
+  const subs = trendSubjectOrder.value
+
+  // 各科：按得分率对比（满分不同也能同图）
+  const subjectSeries = subs.map((sub, i) => ({
+    name: sub,
+    color: SUBJECT_COLORS[i % SUBJECT_COLORS.length],
+    values: stu.exams.map((e: any) => e.scores?.[sub] ?? null) as Array<number | null>,
+    fulls: series.map((s: any) => s.subjects?.find((x: any) => x.subject === sub)?.full ?? 100) as number[],
+  }))
+
+  // 总分：原始分（同一量纲，用 score 模式）
+  const totalSeries = [
+    {
+      name: '总分',
+      color: 'var(--text)',
+      values: stu.exams.map((e: any) => e.total ?? null) as Array<number | null>,
+      fulls: series.map((s: any) => s.totalFull ?? 100) as number[],
+      width: 3,
+    },
+  ]
+
+  return { labels, subjectSeries, totalSeries, student: stu }
+}
+
+async function openTrends() {
+  view.value = 'trends'
+  if (trends.value) return
+  trendLoading.value = true
+  trendError.value = ''
+  try {
+    const res = await get<any>(`/api/classes/${store.current!.id}/exams/trends`)
+    trends.value = res
+  } catch (e: any) {
+    trendError.value = e.message
+  } finally {
+    trendLoading.value = false
+  }
+}
+
+/** 点击学生 → 弹窗看个人折线 */
+const trendStudent = ref<any>(null)
+function openStudentTrend(sid: number) {
+  const t = studentTrendOf(sid)
+  if (t) trendStudent.value = t
+}
+
+/** 该学生是否有足够数据画线（≥2 场有分） */
+function studentHasTrend(sid: number): boolean {
+  const stu = trends.value?.students?.find((s: any) => s.id === sid)
+  if (!stu) return false
+  return stu.exams.filter((e: any) => e.total !== null).length >= 2
+}
+
 /* ---------- AI 考试总结（结构化分块；结果缓存，数据未变不重复消耗额度） ---------- */
 const aiSummary = ref<any>(null)
 const aiSumBusy = ref(false)
@@ -609,6 +731,9 @@ async function parseImport() {
   <div v-if="view === 'list'" class="glass pad">
     <div class="head-row">
       <h2 class="sec-title" style="margin: 0">考试成绩</h2>
+      <button v-if="exams.length" class="gbtn" @click="openTrends">
+        <Icon name="exam" :size="15" /> 趋势分析
+      </button>
       <button class="gbtn primary" @click="openNew"><Icon name="plus" :size="15" /> 新建考试</button>
     </div>
     <p v-if="error" class="err">{{ error }}</p>
@@ -632,6 +757,87 @@ async function parseImport() {
       成绩仅教师可见；家长凭学号绑定后在「家长视图」查看自己孩子的分数与趋势（不含排名）。教室大板不显示成绩。
     </p>
   </div>
+
+  <!-- 趋势分析：全班一张图 + 点击学生看个人 -->
+  <div v-if="view === 'trends'" class="glass pad">
+    <div class="head-row">
+      <button class="gbtn icon" title="返回列表" @click="view = 'list'"><Icon name="chevronLeft" :size="16" /></button>
+      <div style="min-width: 0">
+        <h2 class="sec-title" style="margin: 0">趋势分析</h2>
+        <span class="hint">
+          {{ classTrend ? `${classTrend.examCount} 场考试 · 按得分率对比（各科满分不同）` : '历次考试对比' }}
+        </span>
+      </div>
+    </div>
+
+    <p v-if="trendLoading" class="empty" style="padding: 24px 0">加载中…</p>
+    <p v-else-if="trendError" class="err">{{ trendError }}</p>
+
+    <template v-else-if="classTrend">
+      <!-- 全班趋势：各科均分 + 总分均分 -->
+      <div class="trend-card">
+        <h3 class="trend-title">全班平均分趋势</h3>
+        <TrendChart :labels="classTrend.labels" :series="classTrend.series" :height="220" />
+        <p v-if="classTrend.examCount < 2" class="foot-note" style="margin: 8px 0 0">
+          只有 1 场考试，暂无可对比的趋势——再录入一场即可看到走势。
+        </p>
+      </div>
+
+      <!-- 学生列表：点击看个人折线 -->
+      <div class="trend-card" style="margin-top: 12px">
+        <div class="head-row" style="margin-bottom: 8px">
+          <h3 class="trend-title" style="margin: 0">点击学生查看个人趋势</h3>
+          <span class="foot-note" style="margin-left: auto">至少 2 场有成绩才可对比</span>
+        </div>
+        <div class="stu-trend-list">
+          <button
+            v-for="s in trends?.students ?? []"
+            :key="s.id"
+            class="stu-trend-item"
+            :disabled="!studentHasTrend(s.id)"
+            @click="openStudentTrend(s.id)"
+          >
+            <span class="stu-trend-name">{{ s.name }}</span>
+            <span class="hint num">
+              {{ s.exams.filter((e: any) => e.total !== null).length }} 场
+            </span>
+            <Icon v-if="studentHasTrend(s.id)" name="chevronLeft" :size="13" class="stu-trend-arrow" />
+            <span v-else class="hint">数据不足</span>
+          </button>
+        </div>
+      </div>
+    </template>
+
+    <p v-else class="empty" style="padding: 24px 0; text-align: center">还没有考试记录，无法生成趋势</p>
+  </div>
+
+  <!-- 学生个人趋势弹窗 -->
+  <Teleport to="body">
+    <div v-if="trendStudent" class="gbackdrop" @click.self="trendStudent = null">
+      <div class="gpop" style="width: min(760px, 96vw)">
+        <div class="head-row" style="margin-bottom: 4px">
+          <h3 class="sec-title" style="margin: 0">{{ trendStudent.student.name }} · 成绩趋势</h3>
+          <button class="gbtn icon" style="margin-left: auto" @click="trendStudent = null">
+            <Icon name="x" :size="15" />
+          </button>
+        </div>
+        <p class="foot-note" style="margin: 0 0 10px">
+          各科按得分率对比（满分不同也能同图）；总分单独一张，按原始分。
+        </p>
+        <div class="stu-chart-block">
+          <b class="stu-chart-title">各科走势</b>
+          <TrendChart :labels="trendStudent.labels" :series="trendStudent.subjectSeries" :height="200" mode="rate" />
+        </div>
+        <div class="stu-chart-block" style="margin-top: 12px">
+          <b class="stu-chart-title">总分走势</b>
+          <TrendChart :labels="trendStudent.labels" :series="trendStudent.totalSeries" :height="160" mode="score" />
+        </div>
+        <div class="import-acts">
+          <button class="gbtn primary" @click="trendStudent = null">关闭</button>
+        </div>
+      </div>
+    </div>
+  </Teleport>
 
   <!-- 新建弹窗 -->
   <Teleport to="body">
@@ -1166,7 +1372,6 @@ tr.off td {
   font-size: 14px;
   line-height: 1.8;
 }
-/* 缓存标识：说明这是上次生成的结果，数据未变 */
 /* 标题旁的编辑按钮：小、弱化，不干扰主操作 */
 .meta-edit {
   padding: 3px 5px;
@@ -1178,6 +1383,74 @@ tr.off td {
   color: var(--primary);
   background: var(--primary-soft);
 }
+/* 趋势分析视图 */
+.trend-card {
+  background: var(--field);
+  border: 1px solid var(--line-soft);
+  border-radius: 14px;
+  padding: 14px 16px;
+}
+.trend-title {
+  margin: 0 0 10px;
+  font-size: 13.5px;
+  font-weight: 600;
+}
+.stu-trend-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 6px;
+}
+.stu-trend-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  border: 1px solid var(--line-soft);
+  background: var(--panel-strong);
+  font-family: inherit;
+  font-size: 13px;
+  color: var(--text);
+  cursor: pointer;
+  text-align: left;
+  transition: background 0.15s, border-color 0.15s;
+}
+.stu-trend-item:hover:not(:disabled) {
+  background: var(--primary-soft);
+  border-color: var(--primary);
+}
+.stu-trend-item:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+.stu-trend-name {
+  font-weight: 600;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* chevronLeft 图标旋转成「指向右侧」 */
+.stu-trend-arrow {
+  transform: rotate(180deg);
+  color: var(--faint);
+  flex: none;
+}
+/* 学生弹窗里的分组图 */
+.stu-chart-block {
+  background: var(--field);
+  border: 1px solid var(--line-soft);
+  border-radius: 12px;
+  padding: 10px 12px 8px;
+}
+.stu-chart-title {
+  display: block;
+  font-size: 12px;
+  color: var(--muted);
+  margin-bottom: 2px;
+}
+/* 缓存标识：说明这是上次生成的结果，数据未变 */
 .ai-cached-tag {
   margin: 0 0 8px;
   font-size: 11.5px;

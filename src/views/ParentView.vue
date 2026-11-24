@@ -6,6 +6,7 @@ import { get, post } from '@/api'
 import { SLOT_LABEL } from '@/utils/dates'
 import { CONSENT_VERSION, type ConsentState } from '@/utils/consent'
 import ConsentDialog from '@/components/ConsentDialog.vue'
+import TrendChart from '@/components/TrendChart.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -184,6 +185,59 @@ function deltaOf(examIdx: number, subject: string): number | null {
   if (prev === null || prev === undefined) return null
   return Math.round((cur - prev) * 10) / 10
 }
+
+/** 各科配色（与老师端保持一致） */
+const SUBJECT_COLORS = ['#0a84ff', '#30d158', '#ff9f0a', '#bf5af2', '#ff375f', '#40c8e0', '#ffd60a', '#64a2ff']
+
+/**
+ * 孩子的成绩趋势：各科一张 + 总分一张。
+ * 各科按得分率（满分不同），总分按原始分（同量纲）。
+ * 至少 2 场有成绩才显示。
+ */
+const childTrend = computed(() => {
+  const list = examData.value?.exams
+  if (!list?.length) return null
+  const last = list[list.length - 1]
+  const subs = Object.keys(last?.scores ?? {})
+  if (!subs.length) return null
+
+  const labels = list.map((e: any) => e.name)
+
+  const subjectSeries = subs.map((sub, i) => ({
+    name: sub,
+    color: SUBJECT_COLORS[i % SUBJECT_COLORS.length],
+    values: list.map((e: any) => (e.scores?.[sub]?.score as number | null) ?? null),
+    fulls: list.map((e: any) => (e.scores?.[sub]?.full as number) ?? 100),
+  }))
+
+  // 总分：只累加有分的科目，满分同步累加（缺考不拉低曲线）
+  const totals = list.map((e: any) => {
+    let sum = 0
+    let full = 0
+    let any = false
+    for (const sub of subs) {
+      const v = e.scores?.[sub]
+      if (v?.score != null) {
+        sum += v.score as number
+        full += (v.full as number) ?? 100
+        any = true
+      }
+    }
+    return any ? { total: Math.round(sum * 10) / 10, full } : { total: null as number | null, full }
+  })
+  const totalSeries = [
+    {
+      name: '总分',
+      color: 'var(--text)',
+      values: totals.map((t) => t.total),
+      fulls: totals.map((t) => t.full || 100),
+      width: 3,
+    },
+  ]
+
+  const validCount = totals.filter((t) => t.total !== null).length
+  return { labels, subjectSeries, totalSeries, validCount }
+})
 
 /** 渲染模型：每场考试展开为 {sub, score, full, avg, delta} 行 + 该场的 AI 点评 */
 const examView = computed(() => {
@@ -553,6 +607,22 @@ const weeklyTotals = computed(() => {
       <!-- 考试成绩（绑定后可见：仅自己孩子，含班级均值对比与学校官方校排名） -->
       <section v-if="bound && examData" class="card">
         <h2>考试成绩<span class="bound-suffix"> · {{ examData.student.name }}</span></h2>
+
+        <!-- 成绩趋势：各科一张 + 总分一张（至少 2 场有分才画） -->
+        <div v-if="childTrend" class="child-trend">
+          <div class="child-trend-head">
+            <b>成绩趋势</b>
+            <span class="hint">{{ childTrend.validCount }} 场考试</span>
+          </div>
+          <template v-if="childTrend.validCount >= 2">
+            <b class="child-chart-title">各科走势</b>
+            <TrendChart :labels="childTrend.labels" :series="childTrend.subjectSeries" :height="190" mode="rate" />
+            <b class="child-chart-title" style="margin-top: 10px">总分走势</b>
+            <TrendChart :labels="childTrend.labels" :series="childTrend.totalSeries" :height="150" mode="score" />
+          </template>
+          <p v-else class="none">只有 {{ childTrend.validCount }} 场考试有成绩，暂无可对比的趋势</p>
+        </div>
+
         <div v-if="examData.exams.length" class="exam-list">
           <div
             v-for="e in showAllExams ? examView : examView.slice(-3)"
@@ -915,6 +985,30 @@ h2 {
   font-size: 12.5px;
   color: var(--muted);
   font-weight: 500;
+}
+/* 孩子成绩趋势区块 */
+.child-trend {
+  background: var(--field);
+  border: 1px solid var(--line-soft);
+  border-radius: 12px;
+  padding: 12px 10px 8px;
+  margin-bottom: 12px;
+}
+.child-trend-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 0 4px;
+  margin-bottom: 4px;
+}
+.child-trend-head b {
+  font-size: 13px;
+}
+.child-chart-title {
+  display: block;
+  font-size: 11.5px;
+  color: var(--muted);
+  margin: 2px 0 2px 4px;
 }
 /* ---------- 考试成绩卡 ---------- */
 .exam-list {
