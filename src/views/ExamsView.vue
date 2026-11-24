@@ -348,9 +348,19 @@ const trendError = ref('')
 /** 全班趋势数据（与 loadTrends 共用 trends） */
 const trendSubjectOrder = computed<string[]>(() => {
   if (!trends.value?.series?.length) return []
-  // 取最后一场考试的科目顺序（最新的完整科目集）
-  const last = trends.value.series[trends.value.series.length - 1]
-  return (last?.subjects ?? []).map((s: any) => s.subject)
+  // 取所有场次科目的并集，按首次出现顺序（最后一场可能少考某科，只看它会漏科目）
+  const seen = new Set<string>()
+  const out: string[] = []
+  for (const s of trends.value.series) {
+    for (const sub of s.subjects ?? []) {
+      const name = sub?.subject
+      if (name && !seen.has(name)) {
+        seen.add(name)
+        out.push(name)
+      }
+    }
+  }
+  return out
 })
 
 /** 全班：各科均分 + 总分均分，画在同一张图（按得分率归一化） */
@@ -400,15 +410,22 @@ function studentTrendOf(sid: number) {
   const labels = series.map((s: any) => s.name)
   const subs = trendSubjectOrder.value
 
-  // 各科：按得分率对比（满分不同也能同图）
-  const subjectSeries = subs.map((sub, i) => ({
-    name: sub,
+  // 各科：每科单独一张图（同科目量纲一致，用原始分最直观），横向并排
+  const subjectCharts = subs.map((sub, i) => ({
+    subject: sub,
     color: SUBJECT_COLORS[i % SUBJECT_COLORS.length],
-    values: stu.exams.map((e: any) => e.scores?.[sub] ?? null) as Array<number | null>,
-    fulls: series.map((s: any) => s.subjects?.find((x: any) => x.subject === sub)?.full ?? 100) as number[],
+    series: [
+      {
+        name: sub,
+        color: SUBJECT_COLORS[i % SUBJECT_COLORS.length],
+        values: stu.exams.map((e: any) => e.scores?.[sub] ?? null) as Array<number | null>,
+        fulls: series.map((s: any) => s.subjects?.find((x: any) => x.subject === sub)?.full ?? 100) as number[],
+        width: 2.4,
+      },
+    ],
   }))
 
-  // 总分：原始分（同一量纲，用 score 模式）
+  // 总分：原始分（同一量纲，用 score 模式），单独一张
   const totalSeries = [
     {
       name: '总分',
@@ -419,7 +436,7 @@ function studentTrendOf(sid: number) {
     },
   ]
 
-  return { labels, subjectSeries, totalSeries, student: stu }
+  return { labels, subjectCharts, totalSeries, student: stu }
 }
 
 async function openTrends() {
@@ -814,7 +831,7 @@ async function parseImport() {
   <!-- 学生个人趋势弹窗 -->
   <Teleport to="body">
     <div v-if="trendStudent" class="gbackdrop" @click.self="trendStudent = null">
-      <div class="gpop" style="width: min(760px, 96vw)">
+      <div class="gpop" style="width: min(980px, 96vw)">
         <div class="head-row" style="margin-bottom: 4px">
           <h3 class="sec-title" style="margin: 0">{{ trendStudent.student.name }} · 成绩趋势</h3>
           <button class="gbtn icon" style="margin-left: auto" @click="trendStudent = null">
@@ -822,15 +839,20 @@ async function parseImport() {
           </button>
         </div>
         <p class="foot-note" style="margin: 0 0 10px">
-          各科按得分率对比（满分不同也能同图）；总分单独一张，按原始分。
+          每科单独一张走势图，总分单列（均按原始分，同科量纲一致）
         </p>
-        <div class="stu-chart-block">
-          <b class="stu-chart-title">各科走势</b>
-          <TrendChart :labels="trendStudent.labels" :series="trendStudent.subjectSeries" :height="200" mode="rate" />
-        </div>
-        <div class="stu-chart-block" style="margin-top: 12px">
-          <b class="stu-chart-title">总分走势</b>
-          <TrendChart :labels="trendStudent.labels" :series="trendStudent.totalSeries" :height="160" mode="score" />
+        <div class="stu-chart-grid">
+          <div v-for="c in trendStudent.subjectCharts" :key="c.subject" class="stu-chart-block">
+            <b class="stu-chart-title" :style="{ color: c.color }">{{ c.subject }}</b>
+            <TrendChart :labels="trendStudent.labels" :series="c.series" :height="130" mode="score" />
+          </div>
+          <div class="stu-chart-block stu-chart-total">
+            <b class="stu-chart-title">总分</b>
+            <TrendChart :labels="trendStudent.labels" :series="trendStudent.totalSeries" :height="130" mode="score" />
+            <p class="foot-note" style="margin: 4px 0 0; font-size: 11px">
+              各场科目数/满分可能不同，总分不可直接横向比较；建议结合各科走势看。
+            </p>
+          </div>
         </div>
         <div class="import-acts">
           <button class="gbtn primary" @click="trendStudent = null">关闭</button>
@@ -1438,17 +1460,35 @@ tr.off td {
   flex: none;
 }
 /* 学生弹窗里的分组图 */
+.stu-chart-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 10px;
+}
 .stu-chart-block {
   background: var(--field);
   border: 1px solid var(--line-soft);
   border-radius: 12px;
-  padding: 10px 12px 8px;
+  padding: 8px 10px 6px;
+  min-width: 0;
+}
+/* 总分段：占满整行，与各科区分 */
+.stu-chart-total {
+  grid-column: 1 / -1;
+  background: var(--primary-soft);
+  border-color: transparent;
 }
 .stu-chart-title {
   display: block;
   font-size: 12px;
   color: var(--muted);
   margin-bottom: 2px;
+}
+/* 手机端：单列堆叠，避免图太窄看不清 */
+@media (max-width: 700px) {
+  .stu-chart-grid {
+    grid-template-columns: 1fr;
+  }
 }
 /* 缓存标识：说明这是上次生成的结果，数据未变 */
 .ai-cached-tag {

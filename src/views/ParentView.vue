@@ -197,17 +197,34 @@ const SUBJECT_COLORS = ['#0a84ff', '#30d158', '#ff9f0a', '#bf5af2', '#ff375f', '
 const childTrend = computed(() => {
   const list = examData.value?.exams
   if (!list?.length) return null
-  const last = list[list.length - 1]
-  const subs = Object.keys(last?.scores ?? {})
+  // 科目取所有场次的并集（最后一场可能少考某科，只看它会漏科目）
+  const seen = new Set<string>()
+  const subs: string[] = []
+  for (const e of list) {
+    for (const sub of Object.keys(e.scores ?? {})) {
+      if (!seen.has(sub)) {
+        seen.add(sub)
+        subs.push(sub)
+      }
+    }
+  }
   if (!subs.length) return null
 
   const labels = list.map((e: any) => e.name)
 
-  const subjectSeries = subs.map((sub, i) => ({
-    name: sub,
+  // 每科单独一张图（同科量纲一致，用原始分最直观）
+  const subjectCharts = subs.map((sub, i) => ({
+    subject: sub,
     color: SUBJECT_COLORS[i % SUBJECT_COLORS.length],
-    values: list.map((e: any) => (e.scores?.[sub]?.score as number | null) ?? null),
-    fulls: list.map((e: any) => (e.scores?.[sub]?.full as number) ?? 100),
+    series: [
+      {
+        name: sub,
+        color: SUBJECT_COLORS[i % SUBJECT_COLORS.length],
+        values: list.map((e: any) => (e.scores?.[sub]?.score as number | null) ?? null),
+        fulls: list.map((e: any) => (e.scores?.[sub]?.full as number) ?? 100),
+        width: 2.4,
+      },
+    ],
   }))
 
   // 总分：只累加有分的科目，满分同步累加（缺考不拉低曲线）
@@ -236,7 +253,7 @@ const childTrend = computed(() => {
   ]
 
   const validCount = totals.filter((t) => t.total !== null).length
-  return { labels, subjectSeries, totalSeries, validCount }
+  return { labels, subjectCharts, totalSeries, validCount }
 })
 
 /** 渲染模型：每场考试展开为 {sub, score, full, avg, delta} 行 + 该场的 AI 点评 */
@@ -608,17 +625,28 @@ const weeklyTotals = computed(() => {
       <section v-if="bound && examData" class="card">
         <h2>考试成绩<span class="bound-suffix"> · {{ examData.student.name }}</span></h2>
 
-        <!-- 成绩趋势：各科一张 + 总分一张（至少 2 场有分才画） -->
+        <!-- 成绩趋势：每科单独一张 + 总分一张（至少 2 场有分才画） -->
         <div v-if="childTrend" class="child-trend">
           <div class="child-trend-head">
             <b>成绩趋势</b>
             <span class="hint">{{ childTrend.validCount }} 场考试</span>
           </div>
           <template v-if="childTrend.validCount >= 2">
-            <b class="child-chart-title">各科走势</b>
-            <TrendChart :labels="childTrend.labels" :series="childTrend.subjectSeries" :height="190" mode="rate" />
-            <b class="child-chart-title" style="margin-top: 10px">总分走势</b>
-            <TrendChart :labels="childTrend.labels" :series="childTrend.totalSeries" :height="150" mode="score" />
+            <div
+              v-for="c in childTrend.subjectCharts"
+              :key="c.subject"
+              class="child-chart-block"
+            >
+              <b class="child-chart-title" :style="{ color: c.color }">{{ c.subject }}</b>
+              <TrendChart :labels="childTrend.labels" :series="c.series" :height="130" mode="score" />
+            </div>
+            <div class="child-chart-block child-chart-total">
+              <b class="child-chart-title">总分</b>
+              <TrendChart :labels="childTrend.labels" :series="childTrend.totalSeries" :height="130" mode="score" />
+              <p class="foot-note" style="margin: 4px 2px 0; font-size: 10.5px">
+                各场科目数可能不同，总分不可直接横向比较，建议看各科走势。
+              </p>
+            </div>
           </template>
           <p v-else class="none">只有 {{ childTrend.validCount }} 场考试有成绩，暂无可对比的趋势</p>
         </div>
@@ -1009,6 +1037,19 @@ h2 {
   font-size: 11.5px;
   color: var(--muted);
   margin: 2px 0 2px 4px;
+}
+/* 每科一块，纵向堆叠（手机宽度下并排会太窄） */
+.child-chart-block {
+  background: var(--panel-strong);
+  border: 1px solid var(--line-soft);
+  border-radius: 10px;
+  padding: 6px 8px 4px;
+  margin-top: 8px;
+}
+/* 总分段：底色区分 */
+.child-chart-total {
+  background: var(--primary-soft);
+  border-color: transparent;
 }
 /* ---------- 考试成绩卡 ---------- */
 .exam-list {
