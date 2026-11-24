@@ -185,13 +185,15 @@ function deltaOf(examIdx: number, subject: string): number | null {
   return Math.round((cur - prev) * 10) / 10
 }
 
-/** 渲染模型：每场考试展开为 {sub, score, full, avg, delta} 行 */
+/** 渲染模型：每场考试展开为 {sub, score, full, avg, delta} 行 + 该场的 AI 点评 */
 const examView = computed(() => {
   if (!examData.value) return []
   return examData.value.exams.map((e: any, ei: number) => ({
     id: e.id,
     name: e.name,
     day: e.day,
+    /** 老师针对这个孩子写的 AI 点评（没有则不显示） */
+    comment: (e.comment?.text as string | null) ?? null,
     rows: Object.entries(e.scores).map(([sub, v]: [string, any]) => ({
       sub,
       score: v.score as number | null,
@@ -574,6 +576,11 @@ const weeklyTotals = computed(() => {
                 </span>
               </div>
             </div>
+            <!-- 老师点评（AI 生成或老师撰写，仅针对这个孩子） -->
+            <div v-if="e.comment" class="pexam-comment">
+              <b class="comment-label">老师点评</b>
+              <p class="comment-text">{{ e.comment }}</p>
+            </div>
           </div>
           <button v-if="examData.exams.length > 3 && !showAllExams" class="gmini" @click="showAllExams = true">
             查看更早的 {{ examData.exams.length - 3 }} 场考试
@@ -581,7 +588,7 @@ const weeklyTotals = computed(() => {
         </div>
         <p v-else class="none">还没有考试记录</p>
         <p class="foot-note" style="margin: 10px 0 0">
-          仅展示 {{ examData.student.name }} 的成绩、班级均分与学校官方校排名（若学校成绩单提供）；不显示班内排名。
+          仅展示 {{ examData.student.name }} 的成绩、班级均分、学校官方校排名（若提供）与老师点评；不显示班内排名，也不显示其他同学的信息。
         </p>
       </section>
 
@@ -967,6 +974,28 @@ h2 {
   padding: 1px 7px;
   font-size: 11px;
   font-weight: 600;
+}
+/* 老师点评块：与成绩行用分隔线隔开，弱化底色避免抢分数字 */
+.pexam-comment {
+  margin-top: 10px;
+  padding-top: 9px;
+  border-top: 1px dashed var(--line-soft);
+  background: var(--primary-soft);
+  border-radius: 10px;
+  padding: 9px 11px;
+}
+.comment-label {
+  font-size: 11.5px;
+  color: var(--primary);
+  display: block;
+  margin-bottom: 4px;
+}
+.comment-text {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.75;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 .compose-row {
   display: flex;
