@@ -163,6 +163,11 @@ export const useChatStore = defineStore('chat', () => {
     return messages.value.length ? messages.value[messages.value.length - 1].id : 0
   }
 
+  /** 家长留言已拉到的最大 id（增量拉取游标） */
+  function parentMaxId(): number {
+    return parentMessages.value.length ? parentMessages.value[parentMessages.value.length - 1].id : 0
+  }
+
   async function loadHistory(cid: number, after = 0): Promise<void> {
     const res = await get<{ messages: ChatMessage[] }>(
       `/api/classes/${cid}/messages?after=${after}&limit=300`,
@@ -209,6 +214,9 @@ export const useChatStore = defineStore('chat', () => {
       // 重连补拉断线期间的消息 + 冲刷离线队列
       loadHistory(cid, maxId()).catch(() => {})
       flushQueue().catch(() => {})
+      // 家长留言也要拉一次：教师不一定在消息页，靠这里才能把「离线期间的家长留言」
+      // 计入红点（parentUnread）。带 after 增量，进消息页时 MessagesView 会全量重拉。
+      loadParentHistory(cid, parentMaxId()).catch(() => {})
       if (pingTimer) clearInterval(pingTimer)
       pingTimer = setInterval(() => {
         try {
@@ -339,7 +347,15 @@ export const useChatStore = defineStore('chat', () => {
       }
     } else if (res.messages.length) {
       const seen = new Set(parentMessages.value.map((m) => m.id))
-      for (const m of res.messages) if (!seen.has(m.id)) parentMessages.value.push(m)
+      const stored = parentSeenId(cid)
+      let added = 0
+      for (const m of res.messages) {
+        if (seen.has(m.id)) continue
+        parentMessages.value.push(m)
+        // 增量拉到的新留言同样计红点：教师不在消息页时靠这里把未读补上
+        if (m.id > stored) added++
+      }
+      if (added) parentUnread.value += added
     }
     if (parentMessages.value.length) {
       markParentSeen(cid, parentMessages.value[parentMessages.value.length - 1].id)

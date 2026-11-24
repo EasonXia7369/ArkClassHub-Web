@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, onMounted, onBeforeUnmount, ref, watch } from 'vue'
 import { RouterLink, RouterView, useRoute, useRouter } from 'vue-router'
 import { useDark, useToggle } from '@vueuse/core'
 import { useAuthStore } from '@/stores/auth'
@@ -110,6 +110,13 @@ const NAV = [
 
 const switching = ref(false)
 
+/**
+ * 「消息」红点合计：班级聊天 + 家长留言，两个群组都在消息板块里，
+ * 但红点要在板块外（侧栏/底导航）也能看到，否则老师不在消息页时完全无感。
+ * 家长留言只在侧栏计数，**不弹窗、不响铃、不推系统通知**（对应 chat.ts 里 parent-message 分支）。
+ */
+const msgUnread = computed(() => chat.unread + chat.parentUnread)
+
 // 收到消息：提示音 + 系统通知（页面在后台时）；弹层卡片由 chat.popup 驱动
 function onIncoming(m: { kind: string; body: string; sender_role: string }) {
   notify.beep('incoming')
@@ -218,7 +225,7 @@ onBeforeUnmount(() => chat.reset())
             :style="{ '--tile-color': `var(--tile-${item.key})`, '--tile-bg': `var(--tile-${item.key}-bg)` }"
           >
             <Icon :name="item.icon" :size="19" />
-            <b v-if="item.badge && chat.unread" class="badge">{{ chat.unread > 99 ? '99+' : chat.unread }}</b>
+            <b v-if="item.badge && msgUnread" class="badge">{{ msgUnread > 99 ? '99+' : msgUnread }}</b>
           </span>
           <span>{{ item.name }}</span>
         </RouterLink>
@@ -290,7 +297,7 @@ onBeforeUnmount(() => chat.reset())
           :style="{ '--tile-color': `var(--tile-${item.key})`, '--tile-bg': `var(--tile-${item.key}-bg)` }"
         >
           <Icon :name="item.icon" :size="19" />
-          <b v-if="item.badge && chat.unread" class="badge mobile">{{ chat.unread > 99 ? '99+' : chat.unread }}</b>
+          <b v-if="item.badge && msgUnread" class="badge mobile">{{ msgUnread > 99 ? '99+' : msgUnread }}</b>
         </span>
         <span>{{ item.name }}</span>
       </RouterLink>
