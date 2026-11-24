@@ -53,6 +53,52 @@ watch(
   { immediate: true },
 )
 
+/* ---------- 编辑考试（改名 / 改日期） ---------- */
+const showEditMeta = ref(false)
+const editName = ref('')
+const editDay = ref('')
+const savingMeta = ref(false)
+const editMetaError = ref('')
+
+function openEditMeta() {
+  if (!exam.value) return
+  editName.value = exam.value.name
+  editDay.value = exam.value.day
+  editMetaError.value = ''
+  showEditMeta.value = true
+}
+
+async function saveEditMeta() {
+  if (!store.current || !exam.value || savingMeta.value) return
+  const n = editName.value.trim()
+  if (!n) {
+    editMetaError.value = '考试名称不能为空'
+    return
+  }
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(editDay.value)) {
+    editMetaError.value = '请选择考试日期'
+    return
+  }
+  savingMeta.value = true
+  editMetaError.value = ''
+  try {
+    const res = await put<{ exam: any }>(
+      `/api/classes/${store.current.id}/exams/${exam.value.id}`,
+      { name: n, day: editDay.value },
+    )
+    // 就地更新，避免整页重载丢失编辑态
+    exam.value = { ...exam.value, name: res.exam?.name ?? n, day: res.exam?.day ?? editDay.value }
+    showEditMeta.value = false
+    toast('考试信息已更新')
+    loadExams()
+    loadTrends()
+  } catch (e: any) {
+    editMetaError.value = e.message
+  } finally {
+    savingMeta.value = false
+  }
+}
+
 /* ---------- 新建考试 ---------- */
 const showNew = ref(false)
 const newName = ref('')
@@ -623,12 +669,62 @@ async function parseImport() {
     </div>
   </Teleport>
 
+  <!-- 编辑考试名称与日期 -->
+  <Teleport to="body">
+    <div v-if="showEditMeta" class="gbackdrop" @click.self="showEditMeta = false">
+      <div class="gpop" style="width: min(480px, 94vw)">
+        <h3 class="sec-title">修改考试信息</h3>
+        <div class="row">
+          <div style="flex: 2; min-width: 0">
+            <label class="flabel">考试名称</label>
+            <input
+              v-model="editName"
+              class="ginput"
+              style="width: 100%"
+              placeholder="如：11月月考"
+              maxlength="40"
+              @keyup.enter="saveEditMeta"
+            />
+          </div>
+          <div style="flex: 1; min-width: 0">
+            <label class="flabel">日期</label>
+            <input v-model="editDay" type="date" class="ginput" style="width: 100%" />
+          </div>
+        </div>
+        <p class="foot-note" style="margin: 10px 0 0">
+          改名与改日期不影响已录入的成绩；日期决定历次趋势里的先后顺序。
+        </p>
+        <p v-if="editMetaError" class="err" style="margin: 8px 0 0">{{ editMetaError }}</p>
+        <div class="import-acts">
+          <button class="gbtn" @click="showEditMeta = false">取消</button>
+          <button
+            class="gbtn primary"
+            :disabled="savingMeta || !editName.trim() || !editDay"
+            @click="saveEditMeta"
+          >
+            {{ savingMeta ? '保存中…' : '保存' }}
+          </button>
+        </div>
+      </div>
+    </div>
+  </Teleport>
+
   <!-- 详情 / 录分 -->
   <div v-if="view === 'exam'" class="glass pad">
     <div class="head-row">
       <button class="gbtn icon" title="返回列表" @click="view = 'list'"><Icon name="chevronLeft" :size="16" /></button>
       <div style="min-width: 0">
-        <h2 class="sec-title" style="margin: 0">{{ exam?.name }}</h2>
+        <h2 class="sec-title" style="margin: 0">
+          {{ exam?.name }}
+          <button
+            v-if="!editing"
+            class="gbtn icon meta-edit"
+            title="修改考试名称与日期"
+            @click="openEditMeta"
+          >
+            <Icon name="settings" :size="14" />
+          </button>
+        </h2>
         <span class="hint">{{ exam?.day }} · 满分 {{ exam?.subjects.map((s: any) => s.subject + ' ' + s.full).join(' / ') }}</span>
       </div>
       <template v-if="!editing">
@@ -1071,6 +1167,17 @@ tr.off td {
   line-height: 1.8;
 }
 /* 缓存标识：说明这是上次生成的结果，数据未变 */
+/* 标题旁的编辑按钮：小、弱化，不干扰主操作 */
+.meta-edit {
+  padding: 3px 5px;
+  margin-left: 4px;
+  vertical-align: middle;
+  color: var(--faint);
+}
+.meta-edit:hover {
+  color: var(--primary);
+  background: var(--primary-soft);
+}
 .ai-cached-tag {
   margin: 0 0 8px;
   font-size: 11.5px;
