@@ -77,7 +77,7 @@ async function enter() {
         </select>
       </div>
       <p v-if="error" class="err">{{ error }}</p>
-      <p class="foot-note">进入后输入孩子的学号即可绑定：查看 TA 的出勤、给老师留言。</p>
+      <p class="foot-note">进入后输入孩子的身份证后六位即可绑定：查看 TA 的出勤、给老师留言。</p>
     </section>
 
     <footer class="foot">方舟班级中心 · Ark Class Hub</footer>

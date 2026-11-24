@@ -23,10 +23,9 @@ const STATUS: Record<string, { label: string; cls: string }> = {
   violate: { label: '违纪', cls: 'st-violate' },
 }
 
-/* ---------- 绑定孩子（学号 + 绑定码 → 长效令牌）+ 给老师留言 ---------- */
+/* ---------- 绑定孩子（身份证后六位 → 长效令牌）+ 给老师留言 ---------- */
 const RELATIONS = ['爸爸', '妈妈', '爷爷', '奶奶', '外公', '外婆', '其他']
 const bound = ref<{ id: number; name: string; no: string } | null>(null)
-const bindNo = ref('')
 const bindTail = ref('')
 const bindError = ref('')
 const bindBusy = ref(false)
@@ -147,7 +146,7 @@ async function load() {
       // 令牌无效/未绑定 → 未绑定态（保留绑定框输入）
       if (bound.value) {
         bound.value = null
-        bindError.value = '绑定已失效，请重新绑定（学号 + 绑定码）'
+        bindError.value = '绑定已失效，请重新绑定（身份证后六位）'
         examData.value = null
       }
       setParentToken('')
@@ -207,7 +206,6 @@ const examView = computed(() => {
 
 watch(key, () => {
   bound.value = null
-  bindNo.value = ''
   bindTail.value = ''
   bindError.value = ''
   // 换班级链接 → 本机同意状态按 key 重新读（不同班级视为不同服务入口）
@@ -221,23 +219,21 @@ watch(key, () => {
     if (r && RELATIONS.includes(r)) relation.value = r
     else relation.value = '妈妈'
   }
-  // 二维码扫码直达：?no=<学号> → 自动填学号，家长再输入身份证后六位完成绑定
   // 注意：无论是否带 ?no= 都必须 load()，否则页面数据为空、整页只剩空壳
-  const qNo = (route.query.no as string) ?? ''
-  if (qNo) bindNo.value = qNo.trim()
+  // （?no= 现在只作为兼容旧二维码的无效参数，绑定不再需要学号）
   if (parentToken()) bound.value = { id: 0, name: '', no: '' }
   load()
 }, { immediate: true })
 
-/** 学号 + 身份证后六位 → 服务端 HMAC 校验并签发长效令牌 */
-async function bindParent(no: string, tail: string) {
+/** 身份证后六位 → 服务端 HMAC 校验（班内比对）并签发长效令牌 */
+async function bindParent(tail: string) {
   if (bindBusy.value) return
   bindError.value = ''
   bindBusy.value = true
   try {
     const res = await post<{ token: string; student: { name: string; student_no: string }; consent?: ConsentState }>(
       `/api/parent/${key.value}/bind`,
-      { student_no: no, id_tail: tail },
+      { id_tail: tail },
     )
     setParentToken(res.token)
     bound.value = { id: 0, name: res.student.name, no: res.student.student_no }
@@ -255,7 +251,6 @@ async function bindParent(no: string, tail: string) {
       }
     }
     rememberIdentity()
-    bindNo.value = ''
     bindTail.value = ''
     await load()
   } catch (e: any) {
@@ -266,16 +261,20 @@ async function bindParent(no: string, tail: string) {
 }
 
 function bindNow() {
-  const no = bindNo.value.trim()
-  const tail = bindTail.value.trim()
-  if (!no || !tail) return
-  bindParent(no, tail)
+  const tail = bindTail.value.trim().toUpperCase()
+  if (!tail) return
+  // 前端先挡格式：5 位数字 + 1 位数字或 X（与服务端 normalizeIdTail 一致）
+  if (!/^\d{5}[\dX]$/.test(tail)) {
+    bindError.value = '身份证后六位格式不对（5 位数字 + 1 位数字或 X）'
+    return
+  }
+  bindTail.value = tail
+  bindParent(tail)
 }
 
 /** 更换 = 仅清除本机令牌（服务器令牌仍有效，老师可在名单里解绑） */
 function unbind() {
   bound.value = null
-  bindNo.value = ''
   bindTail.value = ''
   setParentToken('')
   bindError.value = ''
@@ -401,7 +400,7 @@ const weeklyTotals = computed(() => {
       </div>
       <h1>{{ data?.class_name ?? '' }}</h1>
       <p class="date-line" v-if="data">{{ data.day }}（{{ dayjs(data.day).format('dddd') }}）家长视图</p>
-      <p class="privacy-note">学生姓名已脱敏（仅显示姓氏和拼音首字母，仅班主任与家长可对应）。默认展示全班视图；输入学号绑定孩子后，出勤与汇总只看 TA 的。本页可给老师留言（与班级消息相互独立）。</p>
+      <p class="privacy-note">学生姓名已脱敏（仅显示姓氏和拼音首字母，仅班主任与家长可对应）。默认展示全班视图；输入孩子的身份证后六位绑定后，出勤与汇总只看 TA 的。本页可给老师留言（与班级消息相互独立）。</p>
     </header>
 
     <div v-if="loading" class="state">加载中…</div>
@@ -412,30 +411,26 @@ const weeklyTotals = computed(() => {
       <section class="card msg-card">
         <h2>给老师留言</h2>
 
-        <!-- 未绑定：学号 + 身份证后六位 双凭据 -->
+        <!-- 未绑定：身份证后六位 -->
         <div v-if="!bound" class="bind-box">
           <p class="hint" style="margin: 0 0 8px">
-            输入孩子的<b>学号</b>和<b>身份证后六位</b>（老师从学生档案核发给你的核验信息）完成绑定——之后这里显示 TA 的出勤与成绩，留言也署名给 TA：
+            输入孩子的<b>身份证后六位</b>完成绑定——之后这里显示 TA 的出勤与成绩，留言也署名给 TA：
           </p>
           <div class="compose-row">
             <input
-              v-model="bindNo"
-              class="ginput bind-input"
-              placeholder="学号"
-              maxlength="32"
-              @keyup.enter="bindNow"
-            />
-            <input
               v-model="bindTail"
-              class="ginput bind-code"
+              class="ginput bind-code bind-code-solo"
               placeholder="身份证后六位"
               maxlength="6"
+              inputmode="numeric"
+              autocomplete="off"
+              autocapitalize="characters"
               @keyup.enter="bindNow"
             />
             <select v-model="relation" class="gselect bind-rel" @change="rememberIdentity">
               <option v-for="r in RELATIONS" :key="r" :value="r">{{ r }}</option>
             </select>
-            <button class="send-btn" :disabled="bindBusy || !bindNo.trim() || !bindTail.trim()" @click="bindNow">
+            <button class="send-btn" :disabled="bindBusy || !bindTail.trim()" @click="bindNow">
               {{ bindBusy ? '绑定中…' : '绑定' }}
             </button>
           </div>
@@ -870,6 +865,14 @@ h2 {
   width: 110px;
   letter-spacing: 0.08em;
 }
+/* 单一凭据（只填后六位）：输入框占满剩余宽度，与身份选择/按钮同排 */
+.bind-code-solo {
+  flex: 1;
+  width: auto;
+  min-width: 0;
+  max-width: 220px;
+  letter-spacing: 0.12em;
+}
 .bind-rel {
   flex: none;
   width: auto;
@@ -972,12 +975,17 @@ h2 {
 }
 /* 手机端：学号/后六位各占半行，身份与按钮并排在下一行，避免输入框被挤到看不清 */
 @media (max-width: 560px) {
-  .compose-row {
+  /* 绑定行：后六位独占一行（便于核对 6 位数字），身份与按钮并排下一行 */
+  .bind-box .compose-row {
     display: grid;
     grid-template-columns: 1fr 1fr;
     gap: 8px;
   }
-  .bind-input,
+  .bind-box .compose-row .bind-code-solo {
+    grid-column: 1 / -1;
+    width: 100%;
+    max-width: none;
+  }
   .bind-code {
     width: 100%;
     min-width: 0;
@@ -986,7 +994,7 @@ h2 {
     width: 100%;
     min-width: 0;
   }
-  .compose-row .send-btn {
+  .bind-box .compose-row .send-btn {
     width: 100%;
   }
   .thread-bubble {

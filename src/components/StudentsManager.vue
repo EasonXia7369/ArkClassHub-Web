@@ -67,7 +67,7 @@ async function setActive(s: any, active: boolean) {
   await refresh()
 }
 
-/* ---------- 家长身份核验（学号 + 身份证后六位；HMAC 存储，明文/哈希均不回传） ---------- */
+/* ---------- 家长身份核验（仅身份证后六位；HMAC 存储，明文/哈希均不回传） ---------- */
 
 /** 录入/重置单个学生的身份证后六位（重置=重新录入，不撤销已绑定家长）。 */
 async function setIdTail(s: any, tail: string) {
@@ -527,7 +527,7 @@ async function confirmImport() {
       </div>
     </div>
     <p class="foot-note" style="margin: 10px 2px 0">
-      学号 + 身份证后六位是家长绑定的双凭据（后六位加密存储、任何人不可查看，二维码不含该信息）；停用不是删除：历史考勤与作业记录保留，名单里不再显示；转学/退班用停用。
+      身份证后六位是家长绑定的凭据（加密存储、任何人不可查看，二维码不含该信息）；停用不是删除：历史考勤与作业记录保留，名单里不再显示；转学/退班用停用。
     </p>
   </div>
 
@@ -658,10 +658,12 @@ async function confirmImport() {
       <div class="gpop" style="text-align: center">
         <h3 class="sec-title">{{ showBindQr.name }} · 家长绑定二维码</h3>
         <p class="foot-note" style="margin: 0 0 10px">
-          家长微信/浏览器扫码 → 自动填入学号 → 输入身份证后六位完成绑定。二维码不含任何身份核验信息。
+          家长微信/浏览器扫码 → 输入孩子的身份证后六位完成绑定。二维码不含任何身份信息。
         </p>
         <img v-if="bindQrData" :src="bindQrData" alt="家长绑定二维码" style="width: min(280px, 72vw); border-radius: 12px" />
-        <p class="foot-note num" style="margin-top: 10px">学号 {{ showBindQr.student_no || '—' }}</p>
+        <p class="foot-note" style="margin-top: 10px">
+          请把后六位单独告知家长（<b>不要</b>写进二维码或群发）
+        </p>
         <div class="head-row" style="justify-content: center; flex-wrap: wrap; margin-top: 10px">
           <button class="gbtn" @click="copyBindLink">复制绑定链接</button>
           <button class="gmini danger" @click="unbindStudent(showBindQr)">解绑全部设备</button>

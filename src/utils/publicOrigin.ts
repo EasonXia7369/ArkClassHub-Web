@@ -47,7 +47,11 @@ export function parentLinkOf(key: string): string {
   return `${publicOrigin()}/parent/${key}`
 }
 
-/** 家长绑定链接（二维码用：只带学号上下文，身份证后六位绝不进二维码） */
-export function parentBindLink(key: string, studentNo: string): string {
-  return `${parentLinkOf(key)}?no=${encodeURIComponent(studentNo)}`
+/**
+ * 家长绑定链接（二维码用）。
+ * 绑定已改为「仅身份证后六位」，二维码只需带班级 key——学号与后六位都不进二维码。
+ * 保留第二参数以兼容旧调用点，但不再拼进 URL。
+ */
+export function parentBindLink(key: string, _studentNo?: string): string {
+  return parentLinkOf(key)
 }
