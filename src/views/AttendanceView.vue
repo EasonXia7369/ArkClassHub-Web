@@ -8,6 +8,7 @@ import AttendanceBoard from '@/components/AttendanceBoard.vue'
 import StatsBoard from '@/components/StatsBoard.vue'
 import LeavesBoard from '@/components/LeavesBoard.vue'
 import WeeklyReportBoard from '@/components/WeeklyReportBoard.vue'
+import { useEscClose } from '@/composables/useEscClose'
 
 const auth = useAuthStore()
 const store = useClassStore()
@@ -51,6 +52,8 @@ async function submitApply() {
     busy.value = false
   }
 }
+
+useEscClose(showApply, () => (showApply.value = false))
 </script>
 
 <template>

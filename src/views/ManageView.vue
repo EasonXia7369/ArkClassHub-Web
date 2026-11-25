@@ -5,6 +5,7 @@ import { get, post, put, del } from '@/api'
 import { useAi } from '@/composables/useAi'
 import { saveFile } from '@/utils/platform'
 import { parentLinkOf } from '@/utils/publicOrigin'
+import { useEscClose } from '@/composables/useEscClose'
 import { useAuthStore } from '@/stores/auth'
 import { useClassStore } from '@/stores/class'
 import StudentsManager from '@/components/StudentsManager.vue'
@@ -751,6 +752,8 @@ onMounted(() => {
   refreshGradesMine()
   refreshParentLink()
 })
+
+useEscClose(showCreate, () => (showCreate.value = false))
 </script>
 
 <template>

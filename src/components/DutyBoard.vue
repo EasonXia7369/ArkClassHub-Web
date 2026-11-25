@@ -4,6 +4,7 @@ import dayjs from 'dayjs'
 import { get, put } from '@/api'
 import { useClassStore } from '@/stores/class'
 import { useChatStore } from '@/stores/chat'
+import { useEscClose } from '@/composables/useEscClose'
 
 const props = defineProps<{ classId: number }>()
 const store = useClassStore()
@@ -83,6 +84,8 @@ async function saveEdit() {
 function cancelEdit() {
   editing.value = null
 }
+
+useEscClose(editing, cancelEdit)
 </script>
 
 <template>

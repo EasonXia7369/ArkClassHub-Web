@@ -6,6 +6,7 @@ import { pinyinInitial, initialOf } from '@/utils/pinyin'
 import { parentBindLink } from '@/utils/publicOrigin'
 import QRCode from 'qrcode'
 import Icon from '@/components/Icon.vue'
+import { useEscClose } from '@/composables/useEscClose'
 
 const store = useClassStore()
 
@@ -457,6 +458,12 @@ async function confirmImport() {
     importing.value = false
   }
 }
+
+/* ---------- Esc 关闭各弹层（逐个套在打开态上） ---------- */
+useEscClose(showIdTail, () => (showIdTail.value = false))
+useEscClose(showNos, () => (showNos.value = false))
+useEscClose(showImport, () => (showImport.value = false))
+useEscClose(showBindQr, () => (showBindQr.value = null))
 </script>
 
 <template>

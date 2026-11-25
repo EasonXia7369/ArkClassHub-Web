@@ -10,6 +10,7 @@ import { isDesktop, desktopBridge, type ArkWebSyncState } from '@/utils/platform
 import Icon from '@/components/Icon.vue'
 import BrandLogo from '@/components/BrandLogo.vue'
 import ConsentDialog from '@/components/ConsentDialog.vue'
+import { useEscClose } from '@/composables/useEscClose'
 
 const route = useRoute()
 const router = useRouter()
@@ -202,6 +203,15 @@ watch(
 )
 
 onBeforeUnmount(() => chat.reset())
+
+/* ---------- Esc 关闭桌面设置浮层 / 消息弹层 ----------
+ * chat.popup / offlineSummary 是 Pinia store 上的值（已解包），不能直接当 ref 传，
+ * 所以包一层 computed 只提供「是否打开」。 */
+useEscClose(deskPop, () => (deskPop.value = false))
+const msgPopupOpen = computed(() => !!chat.popup)
+useEscClose(msgPopupOpen, () => (chat.popup = null))
+const offlineOpen = computed(() => !!chat.offlineSummary)
+useEscClose(offlineOpen, () => (chat.offlineSummary = null))
 </script>
 
 <template>
@@ -343,6 +353,9 @@ onBeforeUnmount(() => chat.reset())
           <button class="gbtn" style="width: 100%; margin-top: 6px" @click="deskPop = false; router.push('/about')">
             关于方舟班级中心
           </button>
+          <p class="desk-keys">
+            右键：复制/粘贴、图片另存为 · Esc 关闭弹窗 · F11 全屏 · Ctrl+R 重新加载（开发版）
+          </p>
         </div>
       </div>
     </Teleport>
@@ -812,6 +825,14 @@ onBeforeUnmount(() => chat.reset())
 .desk-row small {
   font-weight: 400;
   font-size: 11px;
+  color: var(--muted);
+}
+.desk-keys {
+  margin: 8px 0 0;
+  padding-top: 8px;
+  border-top: 1px dashed var(--line);
+  font-size: 11px;
+  line-height: 1.6;
   color: var(--muted);
 }
 </style>

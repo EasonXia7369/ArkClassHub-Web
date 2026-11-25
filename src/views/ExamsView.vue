@@ -5,6 +5,7 @@ import { useClassStore } from '@/stores/class'
 import { useAi } from '@/composables/useAi'
 import Icon from '@/components/Icon.vue'
 import TrendChart from '@/components/TrendChart.vue'
+import { useEscClose } from '@/composables/useEscClose'
 
 const store = useClassStore()
 const { aiEnabled, ensureStatus } = useAi()
@@ -741,6 +742,13 @@ async function parseImport() {
     importBusy.value = false
   }
 }
+
+/* ---------- Esc 关闭各弹层（逐个套在打开态上） ---------- */
+useEscClose(showNew, () => (showNew.value = false))
+useEscClose(showEditMeta, () => (showEditMeta.value = false))
+useEscClose(showImport, () => (showImport.value = false))
+useEscClose(showComments, () => (showComments.value = false))
+useEscClose(trendStudent, () => (trendStudent.value = null))
 </script>
 
 <template>

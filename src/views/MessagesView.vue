@@ -8,6 +8,7 @@ import { useClassStore } from '@/stores/class'
 import { useChatStore, type ChatMessage, type ParentMsg } from '@/stores/chat'
 import { useNotify } from '@/composables/useNotify'
 import { usePush } from '@/composables/usePush'
+import { useEscClose } from '@/composables/useEscClose'
 import Icon from '@/components/Icon.vue'
 
 const auth = useAuthStore()
@@ -358,6 +359,8 @@ function playVoice(m: ChatMessage) {
   audio.onerror = () => (playingId.value = null)
   audio.play()
 }
+
+useEscClose(previewImage, () => (previewImage.value = null))
 </script>
 
 <template>

@@ -10,6 +10,7 @@ import QRCode from 'qrcode'
 
 import { useClassStore } from '@/stores/class'
 import { dk, STATUS_META } from '@/utils/dates'
+import { useEscClose } from '@/composables/useEscClose'
 import { parentLinkOf } from '@/utils/publicOrigin'
 import Icon from '@/components/Icon.vue'
 
@@ -400,6 +401,11 @@ function toast(msg: string) {
   toastMsg.value = msg
   setTimeout(() => (toastMsg.value = ''), 2200)
 }
+
+/* ---------- Esc 关闭各弹层（逐个套在打开态上） ---------- */
+useEscClose(showParent, () => (showParent.value = false))
+useEscClose(editor, () => (editor.value = null))
+useEscClose(missingMark, () => (missingMark.value = null))
 
 onMounted(() => {
   if (!store.loaded) store.loadClasses().then(load).catch(() => {})

@@ -30,6 +30,8 @@ interface ArkDesktopBridge {
   checkWebSync?(): Promise<{ updated: boolean; hash?: string; error?: string; skipped?: boolean; reason?: string }>
   /** 桌面壳版本号（1.0.3+ 壳提供） */
   version?(): Promise<string>
+  /** 重新加载页面（1.0.6+ 壳提供） */
+  reload?(): Promise<void>
 }
 
 export const desktopBridge: ArkDesktopBridge | null =

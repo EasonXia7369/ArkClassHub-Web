@@ -7,6 +7,7 @@ import { useIdentityStore } from '@/stores/identity'
 import { useChatStore } from '@/stores/chat'
 import { STATUS_META, SLOT_LABEL, dk, weekdayCn } from '@/utils/dates'
 import { pinyinInitial, initialOf } from '@/utils/pinyin'
+import { useEscClose } from '@/composables/useEscClose'
 
 const props = defineProps<{ classId: number }>()
 const store = useClassStore()
@@ -137,6 +138,8 @@ async function saveEntry(status: string, note: string) {
     records.value.set(`${sid}|${slot}`, { status, note })
   }
 }
+
+useEscClose(pop, () => (pop.value = null))
 </script>
 
 <template>
