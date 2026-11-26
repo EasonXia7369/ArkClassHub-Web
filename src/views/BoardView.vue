@@ -199,6 +199,8 @@ async function loadQuote() {
 /* ---------- 数据 ---------- */
 const today = dk()
 const tasks = ref<Array<{ day: string; subject: string; content: string }>>([])
+/** 今天的未交记录（按作业项，用于大板「登记未交」时选择是哪一项） */
+const hwRecords = ref<Array<{ day: string; subject: string; item_no: number; title: string; missing: number[] }>>([])
 const attendance = ref<Array<{ student_id: number; slot: string; status: string; note: string }>>([])
 const duty = ref<Array<{ student_id: number; name: string; role: string }>>([])
 const periods = ref<Array<{ period: number; subject: string; teacher: string }>>([])
@@ -253,16 +255,18 @@ const hasExceptionNames = computed(
 async function load() {
   if (!store.current) return
   const cid = store.current.id
-  const [t, a, d, tt] = await Promise.all([
+  const [t, a, d, tt, hr] = await Promise.all([
     get<any>(`/api/classes/${cid}/hw-tasks?from=${today}&to=${today}`),
     get<any>(`/api/classes/${cid}/attendance?day=${today}`),
     get<any>(`/api/classes/${cid}/duty/today`),
     get<any>(`/api/classes/${cid}/timetable/today`),
+    get<any>(`/api/classes/${cid}/hw-records?from=${today}&to=${today}`),
   ])
   tasks.value = t.tasks
   attendance.value = a.records
   duty.value = d.members
   periods.value = tt.periods
+  hwRecords.value = (hr.records ?? []).filter((r: any) => !r.deleted)
 }
 
 watch(() => store.current?.id, load, { immediate: true })
@@ -371,10 +375,58 @@ async function saveTask() {
   }
 
   // 学生：点科目卡 → 快速登记未交
-const missingMark = ref<{ subject: string; picked: Set<number> } | null>(null)
+const missingMark = ref<{
+  subject: string
+  itemNo: number
+  title: string
+  picked: Set<number>
+} | null>(null)
+
+/** 该科今天已有的未交记录（按项序号），用于弹窗里选是哪一项 */
+const itemsOfSubject = (subject: string) =>
+  hwRecords.value
+    .filter((r) => r.subject === subject)
+    .sort((a, b) => (a.item_no ?? 0) - (b.item_no ?? 0))
+
+/** 弹窗里当前项是否已有记录（没有 = 正在新建，显示虚线「未保存」标签） */
+const currentItemSaved = computed(() => {
+  const m = missingMark.value
+  if (!m) return true
+  return itemsOfSubject(m.subject).some((r) => (r.item_no ?? 0) === m.itemNo)
+})
+
 function openMissing(subject: string) {
-  missingMark.value = { subject, picked: new Set() }
+  const list = itemsOfSubject(subject)
+  // 默认落在第一项（没有记录就是新建第 0 项），并带出已登记的名单
+  const first = list[0]
+  missingMark.value = {
+    subject,
+    itemNo: first?.item_no ?? 0,
+    title: first?.title ?? '',
+    picked: new Set(first?.missing ?? []),
+  }
 }
+
+/** 弹窗里切换作业项：换成那一项的名单 */
+function pickItem(n: number) {
+  if (!missingMark.value) return
+  const rec = itemsOfSubject(missingMark.value.subject).find((r) => (r.item_no ?? 0) === n)
+  missingMark.value = {
+    ...missingMark.value,
+    itemNo: n,
+    title: rec?.title ?? '',
+    picked: new Set(rec?.missing ?? []),
+  }
+}
+
+/** 弹窗里新增一项：序号接在已有项后面，名单清空 */
+function addItemInDialog() {
+  if (!missingMark.value) return
+  const used = itemsOfSubject(missingMark.value.subject).map((r) => r.item_no ?? 0)
+  const next = used.length ? Math.max(...used) + 1 : 0
+  missingMark.value = { ...missingMark.value, itemNo: next, title: '', picked: new Set() }
+}
+
 function toggleMissing(sid: number) {
   if (!missingMark.value) return
   const next = new Set(missingMark.value.picked)
@@ -384,14 +436,18 @@ function toggleMissing(sid: number) {
 }
 async function saveMissing() {
   if (!missingMark.value) return
+  const { subject, itemNo, title, picked } = missingMark.value
   await put(`/api/classes/${store.current!.id}/hw-records`, {
     day: today,
-    subject: missingMark.value.subject,
-    title: '',
-    missing: [...missingMark.value.picked],
+    subject,
+    item_no: itemNo,
+    title,
+    missing: [...picked],
   })
-  toast(`${missingMark.value.subject} 未交名单已保存`)
+  const tag = title ? `（${title}）` : itemNo ? `（第${itemNo + 1}项）` : ''
+  toast(`${subject}${tag} 未交名单已保存`)
   missingMark.value = null
+  await load()
 }
 
 
@@ -622,7 +678,34 @@ onMounted(() => {
     <div v-if="missingMark" class="gbackdrop" @click.self="missingMark = null">
       <div class="gpop">
         <h3 class="sec-title">登记未交 · {{ missingMark.subject }} · {{ today }}</h3>
-        <p class="foot-note">点姓名标记未交（红色），再点取消。</p>
+
+        <!-- 作业项：同一天同一科可能有两项（背诵/作文），各收各的名单 -->
+        <div class="miss-items">
+          <button
+            v-for="r in itemsOfSubject(missingMark.subject)"
+            :key="r.item_no ?? 0"
+            class="miss-item"
+            :class="{ on: missingMark.itemNo === (r.item_no ?? 0) }"
+            @click="pickItem(r.item_no ?? 0)"
+          >
+            第{{ (r.item_no ?? 0) + 1 }}项<small v-if="r.title"> · {{ r.title }}</small>
+          </button>
+          <button v-if="!currentItemSaved" class="miss-item on ghost">
+            第{{ missingMark.itemNo + 1 }}项<small v-if="missingMark.title"> · {{ missingMark.title }}</small>
+          </button>
+          <button class="miss-item add" @click="addItemInDialog">＋ 新增一项</button>
+        </div>
+
+        <label class="flabel" style="margin-top: 10px">本项作业名称（可选，便于区分）</label>
+        <input
+          v-model="missingMark.title"
+          class="ginput"
+          style="width: 100%"
+          maxlength="40"
+          placeholder="如：①背诵课文 ②作文"
+        />
+
+        <p class="foot-note" style="margin: 10px 0 0">点姓名标记未交（红色），再点取消。</p>
         <div class="miss-grid">
           <button
             v-for="s in activeStudents"
@@ -637,7 +720,7 @@ onMounted(() => {
         <div style="display: flex; gap: 8px; justify-content: flex-end; margin-top: 14px">
           <button class="gbtn" @click="missingMark = null">取消</button>
           <button class="gbtn primary" @click="saveMissing">
-            保存（{{ missingMark.picked.size }} 人未交）
+            保存第{{ missingMark.itemNo + 1 }}项（{{ missingMark.picked.size }} 人未交）
           </button>
         </div>
       </div>
@@ -1053,6 +1136,44 @@ onMounted(() => {
   grid-template-columns: repeat(auto-fill, minmax(84px, 1fr));
   gap: 8px;
   margin-top: 10px;
+}
+/* 作业项选择条 */
+.miss-items {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 4px;
+}
+.miss-item {
+  padding: 7px 11px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: var(--field);
+  font-family: inherit;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--muted);
+  cursor: pointer;
+  transition: 0.12s;
+}
+.miss-item small {
+  font-weight: 400;
+  color: var(--faint);
+}
+.miss-item.on {
+  border-color: var(--primary);
+  background: var(--primary-soft);
+  color: var(--primary);
+}
+.miss-item.on small {
+  color: var(--primary);
+}
+.miss-item.ghost {
+  border-style: dashed;
+}
+.miss-item.add {
+  border-style: dashed;
+  color: var(--primary);
 }
 .miss-stu {
   padding: 10px 6px;

@@ -8,6 +8,7 @@ import { useChatStore } from '@/stores/chat'
 import { exportXlsx } from '@/utils/xlsx'
 import { dk, weekdayCn } from '@/utils/dates'
 import { initialOf } from '@/utils/pinyin'
+import Icon from '@/components/Icon.vue'
 
 const props = defineProps<{ classId: number }>()
 const store = useClassStore()
@@ -23,6 +24,8 @@ const day = ref(dk())
 const subject = ref('')
 const title = ref('')
 const missing = ref<Set<number>>(new Set())
+/** 当前正在登记的作业项序号（同一天同一科可以有多项，各收各的未交名单） */
+const itemNo = ref(0)
 const rangeFrom = ref(dayjs().startOf('month').format('YYYY-MM-DD'))
 const rangeTo = ref(dk())
 const rangeRecords = ref<any[]>([])
@@ -34,9 +37,49 @@ const todayRecords = computed(() =>
   rangeRecords.value.filter((r) => r.day === day.value && !r.deleted),
 )
 
+/** 当天该科的所有作业项（按项序号升序） */
+const items = computed(() =>
+  todayRecords.value
+    .filter((r) => r.subject === subject.value)
+    .sort((a: any, b: any) => (a.item_no ?? 0) - (b.item_no ?? 0)),
+)
+
+/** 当前项已保存过的记录（新增项时为 null） */
+const currentRec = computed(
+  () => items.value.find((r: any) => (r.item_no ?? 0) === itemNo.value) ?? null,
+)
+
 const todayTask = computed(() =>
   rangeTasks.value.find((t) => t.day === day.value && t.subject === subject.value),
 )
+
+/** 项标签：只有一项时叫「本次」，多项时「第N项」+ 名称
+ *  N 用存储的 item_no + 1 —— 删掉中间项后会留空号，用数组下标会与实际项号错位 */
+function itemLabel(r: any): string {
+  if (items.value.length <= 1) return r.title || '本次作业'
+  const no = (r.item_no ?? 0) + 1
+  return `第${no}项${r.title ? ' · ' + r.title : ''}`
+}
+
+/** 把当前项已保存的数据回填到编辑区 */
+function syncEdit() {
+  const rec = currentRec.value
+  missing.value = new Set(rec?.missing ?? [])
+  title.value = rec?.title ?? ''
+}
+
+/** 切换到某一项；序号不存在 = 新建项 */
+function selectItem(n: number) {
+  itemNo.value = n
+  syncEdit()
+  surname.value = ''
+}
+
+/** 新增一项：序号接在已有项后面 */
+function addItem() {
+  const used = items.value.map((r: any) => r.item_no ?? 0)
+  selectItem(used.length ? Math.max(...used) + 1 : 0)
+}
 
 const surnameBar = computed(() => {
   const map = new Map<string, number>()
@@ -68,18 +111,14 @@ watch([rangeFrom, rangeTo, props.classId], loadRange, { immediate: true })
 watch(() => chat.refreshTick, () => loadRange())
 
 watch(day, () => {
-  // 换天时载入当天已有记录到勾选状态
-  missing.value = new Set(
-    todayRecords.value.find((r) => r.subject === subject.value)?.missing ?? [],
-  )
-  const first = todayRecords.value.find((r) => r.subject === subject.value)
-  title.value = first?.title ?? ''
+  // 换天：回到第一项（若该科当天没有记录则序号归 0）
+  itemNo.value = items.value.length ? (items.value[0].item_no ?? 0) : 0
+  syncEdit()
 })
 
 watch(subject, () => {
-  const rec = todayRecords.value.find((r) => r.subject === subject.value)
-  missing.value = new Set(rec?.missing ?? [])
-  title.value = rec?.title ?? ''
+  itemNo.value = items.value.length ? (items.value[0].item_no ?? 0) : 0
+  syncEdit()
 })
 
 function toggle(sid: number) {
@@ -97,10 +136,13 @@ async function saveMiss() {
   await put(`/api/classes/${props.classId}/hw-records`, {
     day: day.value,
     subject: subject.value.trim(),
+    item_no: itemNo.value,
     title: title.value.trim(),
     missing: [...missing.value],
   })
   await loadRange()
+  // loadRange 后 items 可能新增了这一项，保持停在当前项
+  syncEdit()
 }
 
 async function markAllPresent() {
@@ -108,15 +150,21 @@ async function markAllPresent() {
   await saveMiss()
 }
 
-async function deleteToday() {
+async function deleteCurrent() {
   if (!subject.value.trim()) return
-  if (!confirm(`删除 ${day.value} ${subject.value} 的作业记录？`)) return
-  await del(
-    `/api/classes/${props.classId}/hw-records?day=${day.value}&subject=${encodeURIComponent(subject.value.trim())}`,
-  )
-  missing.value = new Set()
-  title.value = ''
+  const isMulti = items.value.length > 1
+  const tip = isMulti
+    ? `删除 ${day.value} ${subject.value} 的第 ${itemNo.value + 1} 项？`
+    : `删除 ${day.value} ${subject.value} 的作业记录？`
+  if (!confirm(tip)) return
+  const q =
+    `/api/classes/${props.classId}/hw-records?day=${day.value}&subject=${encodeURIComponent(subject.value.trim())}` +
+    `&item_no=${itemNo.value}`
+  await del(q)
   await loadRange()
+  // 删掉当前项后回到第一项
+  itemNo.value = items.value.length ? (items.value[0].item_no ?? 0) : 0
+  syncEdit()
 }
 
 /* ---------- 统计 ---------- */
@@ -131,7 +179,8 @@ const perStudent = computed(() => {
       const entry = counts.get(sid)
       if (!entry) continue
       entry.count++
-      const t = r.title ? `（${r.title}）` : ''
+      // 同科多项时用作业名区分；没名称就退回「（第N项）」
+      const t = r.title ? `（${r.title}）` : (r.item_no ? `（第${r.item_no + 1}项）` : '')
       entry.detail.push(`${r.day} ${r.subject}${t}`)
     }
   }
@@ -153,7 +202,7 @@ async function exportMiss() {
       { v: r.day },
       { v: weekdayCn(r.day) },
       { v: r.subject },
-      { v: r.title || '' },
+      { v: r.title || (r.item_no ? `第${r.item_no + 1}项` : '') },
       { v: r.missing.map((id: number) => store.students.find((s) => s.id === id)?.name ?? id).join('、') },
     ])
   await exportXlsx(`作业统计_${store.current?.name}_${rangeFrom.value}至${rangeTo.value}.xlsx`, [
@@ -210,14 +259,15 @@ async function loadMiss(r: any) {
   sub.value = 'miss'
   day.value = r.day
   subject.value = r.subject
+  itemNo.value = r.item_no ?? 0
   title.value = r.title
   missing.value = new Set(r.missing)
 }
 
 async function deleteMiss(r: any) {
-  if (!confirm(`删除 ${r.day} ${r.subject} 的作业记录？`)) return
+  if (!confirm(`删除 ${r.day} ${r.subject} 的${r.title ? '「' + r.title + '」' : `第 ${(r.item_no ?? 0) + 1} 项`}？`)) return
   await del(
-    `/api/classes/${props.classId}/hw-records?day=${r.day}&subject=${encodeURIComponent(r.subject)}`,
+    `/api/classes/${props.classId}/hw-records?day=${r.day}&subject=${encodeURIComponent(r.subject)}&item_no=${r.item_no ?? 0}`,
   )
   await loadRange()
 }
@@ -318,6 +368,37 @@ watch([histFrom, histTo], () => {
       <input v-model="title" type="text" class="title-in" placeholder="作业内容（可选）：第3章练习册 P32" maxlength="40" />
     </div>
 
+    <!-- 作业项选择：同一天同一科可以有多项作业，各自一份未交名单 -->
+    <div v-if="subject" class="card pad item-bar">
+      <div class="item-head">
+        <h3 class="sec-title">作业项 <em>{{ items.length }}</em></h3>
+        <button class="gmini" @click="addItem"><Icon name="plus" :size="12" /> 新增一项</button>
+      </div>
+      <p v-if="!items.length" class="item-empty">
+        这一科当天还没有登记过。填好下面的作业内容后点「保存」即创建第 1 项。
+      </p>
+      <div v-else class="item-tabs">
+        <button
+          v-for="r in items"
+          :key="r.item_no ?? 0"
+          class="item-tab"
+          :class="{ on: itemNo === (r.item_no ?? 0) }"
+          @click="selectItem(r.item_no ?? 0)"
+        >
+          <span class="item-name">{{ itemLabel(r) }}</span>
+          <span class="item-cnt" :class="{ nz: r.missing.length }">{{ r.missing.length }} 人未交</span>
+        </button>
+        <button v-if="!currentRec" class="item-tab on ghost">
+          <span class="item-name">第{{ itemNo + 1 }}项</span>
+          <span class="item-cnt">未保存</span>
+        </button>
+      </div>
+      <p v-if="items.length" class="foot-note" style="margin-top: 8px">
+        当前登记：
+        <b>{{ currentRec ? itemLabel(currentRec) : '新的一项（保存后创建）' }}</b>
+      </p>
+    </div>
+
     <div class="surname">
       <button :class="{ on: !surname }" @click="surname = ''">全部</button>
       <button
@@ -346,7 +427,7 @@ watch([histFrom, histTo], () => {
     <p class="foot-note">
       已选 {{ missing.size }} 人未交。点姓名切换状态，
       <a class="lnk" @click="markAllPresent">一键全部交齐</a> ·
-      <a class="lnk danger" @click="deleteToday">删除本次</a>
+      <a class="lnk danger" @click="deleteCurrent">删除当前项</a>
       <button class="btn primary save-btn" @click="saveMiss">保存</button>
     </p>
 
@@ -363,7 +444,7 @@ watch([histFrom, histTo], () => {
       <div class="table-scroll">
       <table class="stats">
         <thead>
-          <tr><th style="width: 30px">#</th><th style="width: 88px">姓名</th><th>未交次数</th><th style="text-align: left; padding-left: 10px">未交明细</th></tr>
+          <tr><th class="c-idx">#</th><th class="c-name">姓名</th><th class="c-count">未交次数</th><th class="c-detail">未交明细</th></tr>
         </thead>
         <tbody>
           <tr v-for="(s, i) in perStudent" :key="s.id">
@@ -380,10 +461,16 @@ watch([histFrom, histTo], () => {
     <div class="card pad" style="margin-top: 12px">
       <h3 class="sec-title">区间作业记录 <em>{{ rangeRecords.filter((r) => !r.deleted).length }}</em></h3>
       <div v-if="rangeRecords.filter((r) => !r.deleted).length" class="rec-list">
-        <div v-for="r in rangeRecords.filter((x) => !x.deleted)" :key="r.day + r.subject" class="rec-row">
+        <div
+          v-for="r in rangeRecords.filter((x) => !x.deleted)"
+          :key="r.day + r.subject + (r.item_no ?? 0)"
+          class="rec-row"
+        >
           <div class="rec-main">
             <b class="num">{{ r.day }}</b> · <b>{{ r.subject }}</b>
+            <span v-if="r.item_no" class="rec-item-no">第{{ r.item_no + 1 }}项</span>
             <span v-if="r.title" class="rec-title">{{ r.title }}</span>
+            <span v-else-if="r.item_no" class="rec-title faint">（未命名）</span>
             <span class="rec-missing">未交：{{ missNames(r.missing) }}</span>
           </div>
           <div class="rec-acts">
@@ -717,6 +804,38 @@ watch([histFrom, histTo], () => {
   padding: 8px 6px;
   border-bottom: 1px solid var(--line);
   text-align: center;
+  white-space: nowrap;
+}
+/* 列宽用 class 而不是内联 width：手机端要能覆盖，「未交次数」被挤成竖排就是宽度不够 */
+.stats th.c-idx {
+  width: 30px;
+}
+.stats th.c-name {
+  width: 88px;
+}
+.stats th.c-detail {
+  text-align: left;
+  padding-left: 10px;
+}
+/* 手机端：列宽收窄，避免「未交次数」被挤成竖排 */
+@media (max-width: 860px) {
+  .stats th,
+  .stats td {
+    padding: 7px 4px;
+  }
+  .stats th.c-idx {
+    width: 22px;
+  }
+  .stats th.c-name {
+    width: 62px;
+  }
+  .stats th.c-count {
+    width: 48px;
+  }
+  .stats td.vio {
+    font-size: 12px;
+    line-height: 1.5;
+  }
 }
 .stats td {
   padding: 6px;
@@ -811,6 +930,17 @@ textarea {
   color: var(--muted);
   font-size: 12px;
 }
+.rec-title.faint {
+  color: var(--faint);
+}
+.rec-item-no {
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--primary-soft);
+  color: var(--primary);
+  font-size: 11px;
+  font-weight: 700;
+}
 .rec-missing {
   color: var(--absent);
   font-size: 12px;
@@ -819,5 +949,82 @@ textarea {
   display: flex;
   gap: 6px;
   flex: none;
+}
+
+/* ---------- 作业项选择器 ---------- */
+.item-bar {
+  margin-bottom: 8px;
+}
+.item-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+.item-empty {
+  color: var(--faint);
+  font-size: 12.5px;
+  line-height: 1.7;
+  margin: 0;
+}
+.item-tabs {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  padding-bottom: 4px;
+  scrollbar-width: none;
+}
+.item-tabs::-webkit-scrollbar {
+  display: none;
+}
+.item-tab {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 3px;
+  padding: 8px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: var(--field);
+  cursor: pointer;
+  font-family: inherit;
+  text-align: left;
+  transition: 0.12s;
+}
+.item-tab.on {
+  border-color: var(--primary);
+  background: var(--primary-soft);
+  box-shadow: 0 0 0 1px var(--primary) inset;
+}
+.item-tab.ghost {
+  border-style: dashed;
+}
+.item-name {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text);
+  white-space: nowrap;
+}
+.item-tab.on .item-name {
+  color: var(--primary);
+}
+.item-cnt {
+  font-size: 11px;
+  color: var(--faint);
+  white-space: nowrap;
+}
+.item-cnt.nz {
+  color: var(--absent);
+  font-weight: 700;
+}
+@media (max-width: 860px) {
+  .item-tab {
+    padding: 7px 10px;
+  }
+  .item-name {
+    font-size: 12.5px;
+  }
 }
 </style>
