@@ -352,11 +352,45 @@ async function deleteMsg(m: ChatMessage) {
   await chat.deleteMessage(store.current!.id, m.id)
 }
 const playingId = ref<number | null>(null)
+
+/**
+ * 加载失败的媒体 id 集合。
+ * 图片是 <img src> 直接加载，失败时浏览器只留一块空白——看不出是「没图」还是「加载挂了」。
+ * 记下来换成可点重试的提示；重试时加时间戳绕开浏览器/Service Worker 缓存。
+ */
+const failedMedia = ref(new Set<number>())
+const mediaNonce = ref(new Map<number, number>())
+
+function markMediaFailed(id: number) {
+  const next = new Set(failedMedia.value)
+  next.add(id)
+  failedMedia.value = next
+}
+
+function retryMedia(id: number) {
+  const next = new Set(failedMedia.value)
+  next.delete(id)
+  failedMedia.value = next
+  const n = new Map(mediaNonce.value)
+  n.set(id, Date.now())
+  mediaNonce.value = n
+}
+
+/** 带重试 nonce 的媒体地址（首次加载不带参数，重试后才加 v=） */
+function mediaSrcRetry(m: ChatMessage): string {
+  const base = chat.mediaSrc(m)
+  const n = mediaNonce.value.get(m.id)
+  return n ? `${base}&v=${n}` : base
+}
+
 function playVoice(m: ChatMessage) {
   playingId.value = m.id
-  const audio = new Audio(chat.mediaSrc(m))
+  const audio = new Audio(mediaSrcRetry(m))
   audio.onended = () => (playingId.value = null)
-  audio.onerror = () => (playingId.value = null)
+  audio.onerror = () => {
+    playingId.value = null
+    markMediaFailed(m.id)
+  }
   audio.play()
 }
 
@@ -413,13 +447,26 @@ useEscClose(previewImage, () => (previewImage.value = null))
           </div>
           <template v-if="m.kind === 'text'">{{ m.body }}</template>
           <template v-else-if="m.kind === 'image'">
-            <img :src="chat.mediaSrc(m)" class="chat-img" loading="lazy" @click="previewImage = chat.mediaSrc(m)" />
+            <img
+              v-if="!failedMedia.has(m.id)"
+              :src="mediaSrcRetry(m)"
+              class="chat-img"
+              loading="lazy"
+              @click="previewImage = mediaSrcRetry(m)"
+              @error="markMediaFailed(m.id)"
+            />
+            <!-- 加载失败不能只剩一片空白：给出可点重试的提示，否则用户以为「图片丢了」 -->
+            <button v-else class="media-retry" @click="retryMedia(m.id)">
+              <Icon name="image" :size="15" />
+              图片加载失败，点击重试
+            </button>
           </template>
           <template v-else-if="m.kind === 'voice'">
             <button class="voice" @click="playVoice(m)">
               <Icon :name="playingId === m.id ? 'clock' : 'play'" :size="16" />
               {{ ((m.media_duration_ms ?? 0) / 1000).toFixed(1) }}" 语音
             </button>
+            <p v-if="failedMedia.has(m.id)" class="media-hint">语音加载失败，请稍后再试</p>
           </template>
         </div>
       </div>
@@ -728,6 +775,33 @@ useEscClose(previewImage, () => (previewImage.value = null))
   border-radius: 10px;
   display: block;
   cursor: zoom-in;
+  /* 图片解码前占位，避免加载完「跳一下」 */
+  min-height: 40px;
+  background: var(--field);
+}
+/* 媒体加载失败的占位：虚线框 + 可点重试，比空白更能说明问题 */
+.media-retry {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: min(320px, 100%);
+  padding: 14px 16px;
+  border-radius: 10px;
+  border: 1px dashed var(--line);
+  background: var(--field);
+  font-family: inherit;
+  font-size: 12.5px;
+  color: var(--muted);
+  cursor: pointer;
+}
+.media-retry:hover {
+  border-color: var(--primary);
+  color: var(--primary);
+}
+.media-hint {
+  margin: 6px 0 0;
+  font-size: 11.5px;
+  color: var(--absent);
 }
 .voice {
   display: inline-flex;
