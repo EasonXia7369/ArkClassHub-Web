@@ -291,19 +291,28 @@
 }
 
 /* ---------- 弹层 ---------- */
+/* flex + 子元素 margin:auto 而不是 grid/place-items:center：
+ * 内容比视口高时，居中会把顶部顶到可视区外且不可滚动（手机上趋势图弹窗就是这样卡住的）。
+ * 用 scroll 容器 + margin:auto，矮的时候仍居中，高的时候从顶部开始并能滚动。 */
 .gbackdrop {
   position: fixed;
   inset: 0;
   background: rgba(6, 10, 22, 0.4);
   backdrop-filter: blur(6px);
   z-index: 90;
-  display: grid;
-  place-items: center;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
   padding: 16px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
 }
 
 .gpop {
+  margin: auto;
   width: min(420px, 94vw);
+  max-width: 100%;
   background: var(--panel-strong);
   backdrop-filter: var(--glass-blur);
   -webkit-backdrop-filter: var(--glass-blur);
@@ -312,6 +321,16 @@
   box-shadow: var(--shadow);
   padding: 18px;
   animation: pop-in var(--dur-med) var(--ease-spring);
+}
+
+/* 手机端：边距收紧，把宽度让给内容 */
+@media (max-width: 700px) {
+  .gbackdrop {
+    padding: 10px;
+  }
+  .gpop {
+    padding: 14px;
+  }
 }
 
 .gbackdrop .pop,

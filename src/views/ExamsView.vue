@@ -839,8 +839,8 @@ useEscClose(trendStudent, () => (trendStudent.value = null))
   <!-- 学生个人趋势弹窗 -->
   <Teleport to="body">
     <div v-if="trendStudent" class="gbackdrop" @click.self="trendStudent = null">
-      <div class="gpop" style="width: min(980px, 96vw)">
-        <div class="head-row" style="margin-bottom: 4px">
+      <div class="gpop stu-trend-modal" style="width: min(980px, 96vw)">
+        <div class="head-row stu-trend-head">
           <h3 class="sec-title" style="margin: 0">{{ trendStudent.student.name }} · 成绩趋势</h3>
           <button class="gbtn icon" style="margin-left: auto" @click="trendStudent = null">
             <Icon name="x" :size="15" />
@@ -862,7 +862,7 @@ useEscClose(trendStudent, () => (trendStudent.value = null))
             </p>
           </div>
         </div>
-        <div class="import-acts">
+        <div class="import-acts stu-trend-foot">
           <button class="gbtn primary" @click="trendStudent = null">关闭</button>
         </div>
       </div>
@@ -1492,10 +1492,51 @@ tr.off td {
   color: var(--muted);
   margin-bottom: 2px;
 }
-/* 手机端：单列堆叠，避免图太窄看不清 */
+
+/* 个人趋势弹窗：标题与「关闭」常驻，图表区自己滚。
+ * 7 张图叠起来有 1200+px，手机上一屏放不下；整页滚会让标题和关闭按钮跑出视野。 */
+.stu-trend-modal {
+  display: flex;
+  flex-direction: column;
+  max-height: calc(100dvh - 32px);
+  overflow: hidden;
+}
+.stu-trend-head {
+  flex: none;
+  margin-bottom: 4px;
+}
+.stu-trend-modal > .foot-note {
+  flex: none;
+}
+.stu-chart-grid {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  /* 顶部/底部给一点内边距，滚到底时不贴边 */
+  padding: 2px 2px 10px;
+  margin: 0 -2px;
+}
+.stu-trend-foot {
+  flex: none;
+  margin-top: 10px;
+}
+
+/* 手机端：单列堆叠，图高抬到 150 让曲线有起伏空间；弹窗贴满视口 */
 @media (max-width: 700px) {
   .stu-chart-grid {
     grid-template-columns: 1fr;
+    gap: 8px;
+  }
+  .stu-trend-modal {
+    /* 100% 而不是 100vw：父层有 10px padding，100vw 会横向溢出 */
+    width: 100% !important;
+    max-height: calc(100dvh - 20px);
+    padding: 12px 12px calc(12px + env(safe-area-inset-bottom));
+    margin: 0;
+  }
+  .stu-chart-block {
+    padding: 8px 8px 4px;
   }
 }
 /* 缓存标识：说明这是上次生成的结果，数据未变 */
