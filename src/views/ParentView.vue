@@ -7,6 +7,7 @@ import { SLOT_LABEL } from '@/utils/dates'
 import { CONSENT_VERSION, type ConsentState } from '@/utils/consent'
 import ConsentDialog from '@/components/ConsentDialog.vue'
 import TrendChart from '@/components/TrendChart.vue'
+import Icon from '@/components/Icon.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -674,9 +675,11 @@ const weeklyTotals = computed(() => {
                 </span>
               </div>
             </div>
-            <!-- 老师点评（AI 生成或老师撰写，仅针对这个孩子） -->
+            <!-- AI 点评（老师用 AI 生成后发家长，可编辑） -->
             <div v-if="e.comment" class="pexam-comment">
-              <b class="comment-label">老师点评</b>
+              <b class="comment-label">
+                <Icon name="sparkles" :size="12" /> AI 点评
+              </b>
               <p class="comment-text">{{ e.comment }}</p>
             </div>
           </div>
@@ -686,7 +689,7 @@ const weeklyTotals = computed(() => {
         </div>
         <p v-else class="none">还没有考试记录</p>
         <p class="foot-note" style="margin: 10px 0 0">
-          仅展示 {{ examData.student.name }} 的成绩、班级均分、学校官方校排名（若提供）与老师点评；不显示班内排名，也不显示其他同学的信息。
+          仅展示 {{ examData.student.name }} 的成绩、班级均分、学校官方校排名（若提供）与 AI 点评；不显示班内排名，也不显示其他同学的信息。
         </p>
       </section>
 
@@ -1110,7 +1113,7 @@ h2 {
   font-size: 11px;
   font-weight: 600;
 }
-/* 老师点评块：与成绩行用分隔线隔开，弱化底色避免抢分数字 */
+/* AI 点评块：与成绩行用分隔线隔开，弱化底色避免抢分数字 */
 .pexam-comment {
   margin-top: 10px;
   padding-top: 9px;
@@ -1120,9 +1123,11 @@ h2 {
   padding: 9px 11px;
 }
 .comment-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   font-size: 11.5px;
   color: var(--primary);
-  display: block;
   margin-bottom: 4px;
 }
 .comment-text {
