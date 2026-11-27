@@ -53,12 +53,16 @@ const todayTask = computed(() =>
   rangeTasks.value.find((t) => t.day === day.value && t.subject === subject.value),
 )
 
-/** 项标签：只有一项时叫「本次」，多项时「第N项」+ 名称
- *  N 用存储的 item_no + 1 —— 删掉中间项后会留空号，用数组下标会与实际项号错位 */
+/** 项序号标记：用 ① 这类圈码，比「第1项/第2项」短得多，不抢作业内容的视觉位置 */
+const CIRCLED = '①②③④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑭⑮⑯⑰⑱⑲⑳'
+function noMark(no: number): string {
+  return no >= 0 && no < CIRCLED.length ? CIRCLED[no] : `第${no + 1}项`
+}
+
+/** 项标签：显示作业内容（没有内容时给「未命名」，让缺填一眼看出来）
+ *  序号只作圈码前缀——用户要按内容区分是哪项作业，不是按序号 */
 function itemLabel(r: any): string {
-  if (items.value.length <= 1) return r.title || '本次作业'
-  const no = (r.item_no ?? 0) + 1
-  return `第${no}项${r.title ? ' · ' + r.title : ''}`
+  return r.title || '未命名'
 }
 
 /** 把当前项已保存的数据回填到编辑区 */
@@ -133,13 +137,20 @@ async function saveMiss() {
     alert('请先选科目')
     return
   }
-  await put(`/api/classes/${props.classId}/hw-records`, {
+  // 作业内容是区分「是哪一项」的唯一依据，空着会让多项记录全变成「未命名」
+  if (!title.value.trim() && !currentRec.value?.title) {
+    alert('请先填写作业内容——同一天同一科有多项时，靠它区分是哪项作业')
+    return
+  }
+  // 只改名单、没改内容时不要用空字符串覆盖库里的名称
+  const body = {
     day: day.value,
     subject: subject.value.trim(),
     item_no: itemNo.value,
-    title: title.value.trim(),
     missing: [...missing.value],
-  })
+  } as Record<string, unknown>
+  if (title.value.trim()) body.title = title.value.trim()
+  await put(`/api/classes/${props.classId}/hw-records`, body)
   await loadRange()
   // loadRange 后 items 可能新增了这一项，保持停在当前项
   syncEdit()
@@ -152,11 +163,10 @@ async function markAllPresent() {
 
 async function deleteCurrent() {
   if (!subject.value.trim()) return
-  const isMulti = items.value.length > 1
-  const tip = isMulti
-    ? `删除 ${day.value} ${subject.value} 的第 ${itemNo.value + 1} 项？`
-    : `删除 ${day.value} ${subject.value} 的作业记录？`
-  if (!confirm(tip)) return
+  const label = currentRec.value?.title
+    ? `「${currentRec.value.title}」`
+    : `${noMark(itemNo.value)}（未命名）`
+  if (!confirm(`删除 ${day.value} ${subject.value} 的${label}？`)) return
   const q =
     `/api/classes/${props.classId}/hw-records?day=${day.value}&subject=${encodeURIComponent(subject.value.trim())}` +
     `&item_no=${itemNo.value}`
@@ -168,6 +178,19 @@ async function deleteCurrent() {
 }
 
 /* ---------- 统计 ---------- */
+/** 哪些「科目@日期」有多个项（只有这些才需要显示圈码，单项不必标序号） */
+const multiSubjects = computed(() => {
+  const seen = new Map<string, number>()
+  for (const r of rangeRecords.value) {
+    if (r.deleted) continue
+    const k = `${r.subject}@${r.day}`
+    seen.set(k, (seen.get(k) ?? 0) + 1)
+  }
+  const out = new Set<string>()
+  for (const [k, n] of seen) if (n > 1) out.add(k)
+  return out
+})
+
 const perStudent = computed(() => {
   const counts = new Map<number, { name: string; count: number; detail: string[] }>()
   for (const s of store.students.filter((x) => x.active)) {
@@ -179,9 +202,10 @@ const perStudent = computed(() => {
       const entry = counts.get(sid)
       if (!entry) continue
       entry.count++
-      // 同科多项时用作业名区分；没名称就退回「（第N项）」
-      const t = r.title ? `（${r.title}）` : (r.item_no ? `（第${r.item_no + 1}项）` : '')
-      entry.detail.push(`${r.day} ${r.subject}${t}`)
+      // 多项时用作业名区分，没有名称退回圈码；单项不标序号（日期+科目已足够）
+      const multi = multiSubjects.value.has(`${r.subject}@${r.day}`)
+      const tag = multi ? (r.title ? `（${r.title}）` : `（${noMark(r.item_no ?? 0)}）`) : ''
+      entry.detail.push(`${r.day} ${r.subject}${tag}`)
     }
   }
   return [...counts.entries()]
@@ -265,7 +289,8 @@ async function loadMiss(r: any) {
 }
 
 async function deleteMiss(r: any) {
-  if (!confirm(`删除 ${r.day} ${r.subject} 的${r.title ? '「' + r.title + '」' : `第 ${(r.item_no ?? 0) + 1} 项`}？`)) return
+  const label = r.title ? `「${r.title}」` : `${noMark(r.item_no ?? 0)}（未命名）`
+  if (!confirm(`删除 ${r.day} ${r.subject} 的${label}？`)) return
   await del(
     `/api/classes/${props.classId}/hw-records?day=${r.day}&subject=${encodeURIComponent(r.subject)}&item_no=${r.item_no ?? 0}`,
   )
@@ -365,7 +390,7 @@ watch([histFrom, histTo], () => {
         <option value="" disabled>科目</option>
         <option v-for="s in subjects" :key="s" :value="s">{{ s }}</option>
       </select>
-      <input v-model="title" type="text" class="title-in" placeholder="作业内容（可选）：第3章练习册 P32" maxlength="40" />
+      <input v-model="title" type="text" class="title-in" placeholder="作业内容：如 第3章练习册 P32 / 背诵课文" maxlength="40" />
     </div>
 
     <!-- 作业项选择：同一天同一科可以有多项作业，各自一份未交名单 -->
@@ -382,20 +407,24 @@ watch([histFrom, histTo], () => {
           v-for="r in items"
           :key="r.item_no ?? 0"
           class="item-tab"
-          :class="{ on: itemNo === (r.item_no ?? 0) }"
+          :class="{ on: itemNo === (r.item_no ?? 0), unnamed: !r.title }"
           @click="selectItem(r.item_no ?? 0)"
         >
-          <span class="item-name">{{ itemLabel(r) }}</span>
+          <span class="item-name">
+            <span class="item-no">{{ noMark(r.item_no ?? 0) }}</span>{{ itemLabel(r) }}
+          </span>
           <span class="item-cnt" :class="{ nz: r.missing.length }">{{ r.missing.length }} 人未交</span>
         </button>
-        <button v-if="!currentRec" class="item-tab on ghost">
-          <span class="item-name">第{{ itemNo + 1 }}项</span>
+        <button v-if="!currentRec" class="item-tab on ghost" :class="{ unnamed: !title.trim() }">
+          <span class="item-name">
+            <span class="item-no">{{ noMark(itemNo) }}</span>{{ title.trim() || '未命名' }}
+          </span>
           <span class="item-cnt">未保存</span>
         </button>
       </div>
       <p v-if="items.length" class="foot-note" style="margin-top: 8px">
         当前登记：
-        <b>{{ currentRec ? itemLabel(currentRec) : '新的一项（保存后创建）' }}</b>
+        <b>{{ currentRec ? itemLabel(currentRec) : '新的一项（填好内容后保存创建）' }}</b>
       </p>
     </div>
 
@@ -468,9 +497,10 @@ watch([histFrom, histTo], () => {
         >
           <div class="rec-main">
             <b class="num">{{ r.day }}</b> · <b>{{ r.subject }}</b>
-            <span v-if="r.item_no" class="rec-item-no">第{{ r.item_no + 1 }}项</span>
+            <!-- 多项时才需要圈码区分；内容在前，序号只做辅助 -->
+            <span v-if="multiSubjects.has(r.subject + '@' + r.day)" class="rec-item-no">{{ noMark(r.item_no ?? 0) }}</span>
             <span v-if="r.title" class="rec-title">{{ r.title }}</span>
-            <span v-else-if="r.item_no" class="rec-title faint">（未命名）</span>
+            <span v-else class="rec-title faint">（未命名）</span>
             <span class="rec-missing">未交：{{ missNames(r.missing) }}</span>
           </div>
           <div class="rec-acts">
@@ -1006,9 +1036,27 @@ textarea {
   font-weight: 700;
   color: var(--text);
   white-space: nowrap;
+  /* 作业名可能很长：超宽时省略，不把选择条撑到屏幕外 */
+  max-width: 190px;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .item-tab.on .item-name {
   color: var(--primary);
+}
+/* 圈码：弱化处理，只当序号用，不抢作业名的视觉位置 */
+.item-no {
+  font-weight: 600;
+  color: var(--faint);
+  margin-right: 4px;
+}
+.item-tab.on .item-no {
+  color: var(--primary);
+}
+/* 未命名的项弱化显示，让「该给它起个名字」一眼可见 */
+.item-tab.unnamed .item-name {
+  color: var(--faint);
+  font-weight: 600;
 }
 .item-cnt {
   font-size: 11px;
@@ -1025,6 +1073,7 @@ textarea {
   }
   .item-name {
     font-size: 12.5px;
+    max-width: 150px;
   }
 }
 </style>

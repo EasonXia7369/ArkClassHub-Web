@@ -1,12 +1,15 @@
 <script setup lang="ts">
 import { computed, type Component } from 'vue'
 import {
+  AlarmClock,
   Bell,
   BellOff,
   Calendar,
+  CalendarOff,
   ChartColumn,
   Check,
   ChevronLeft,
+  CircleCheck,
   ClipboardCheck,
   ClipboardList,
   Clock,
@@ -27,9 +30,11 @@ import {
   Settings,
   Sparkles,
   Sun,
+  TriangleAlert,
   Upload,
   UserCog,
   Users,
+  UserX,
   X,
 } from 'lucide-vue-next'
 
@@ -69,6 +74,13 @@ const MAP: Record<string, Component> = {
   send: Send,
   sparkles: Sparkles,
   logout: LogOut,
+  /* ---------- 考勤状态（原 ✓⭕□×△ 符号换成矢量图标） ----------
+   * 语义与配色对应 --present/--leave/--late/--absent/--violate */
+  statusPresent: CircleCheck,
+  statusLeave: CalendarOff,
+  statusLate: AlarmClock,
+  statusAbsent: UserX,
+  statusViolate: TriangleAlert,
 }
 
 const props = defineProps<{ name: string; size?: number }>()

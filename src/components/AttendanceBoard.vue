@@ -6,6 +6,7 @@ import { useClassStore } from '@/stores/class'
 import { useIdentityStore } from '@/stores/identity'
 import { useChatStore } from '@/stores/chat'
 import { STATUS_META, SLOT_LABEL, dk, weekdayCn } from '@/utils/dates'
+import Icon from '@/components/Icon.vue'
 import { pinyinInitial, initialOf } from '@/utils/pinyin'
 import { useEscClose } from '@/composables/useEscClose'
 
@@ -194,11 +195,14 @@ useEscClose(pop, () => (pop.value = null))
             <button
               class="cell"
               :class="cellOf(s.id, slot)?.status"
+              :title="cellOf(s.id, slot)?.note || ''"
               @click="openPop(s.id, s.name, slot)"
             >
-              <template v-if="cellOf(s.id, slot)">
-                {{ STATUS_META[cellOf(s.id, slot)!.status]?.sym }}
-              </template>
+              <Icon
+                v-if="cellOf(s.id, slot)"
+                :name="STATUS_META[cellOf(s.id, slot)!.status]?.icon ?? 'check'"
+                :size="15"
+              />
             </button>
           </td>
         </tr>
@@ -207,7 +211,7 @@ useEscClose(pop, () => (pop.value = null))
     </div>
   </div>
   <p class="foot-note">
-    点格子标记：空白✓＝出勤，⭕请假、□迟到、×旷课、△违纪；标记后可顺手写备注。
+    点格子标记：空白格＝出勤，其余按图标区分请假、迟到、旷课、违纪；标记后可顺手写备注。
   </p>
 
   <!-- 标记面板 -->
@@ -222,7 +226,7 @@ useEscClose(pop, () => (pop.value = null))
             :class="['b-' + st, { sel: popStatus === st }]"
             @click="mark(st)"
           >
-            {{ meta.sym }} {{ meta.label }}
+            <Icon :name="meta.icon" :size="15" /> {{ meta.label }}
           </button>
         </div>
         <input
@@ -448,9 +452,14 @@ input[type='search'] {
   border-radius: 8px;
   border: 1px solid var(--line);
   background: var(--field);
-  font-size: 14px;
   cursor: pointer;
   transition: 0.12s;
+  /* 图标居中：原来用文本符号靠 line-height 对齐，换矢量图标后要显式居中 */
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  color: var(--muted);
 }
 .cell:active {
   transform: scale(0.94);
@@ -459,6 +468,12 @@ input[type='search'] {
   background: var(--leave-bg);
   border-color: var(--leave);
   color: var(--leave);
+}
+/* 出勤原来靠「留空」表示，改图标后需要一个明确的绿勾状态 */
+.cell.present {
+  background: var(--present-bg);
+  border-color: var(--present);
+  color: var(--present);
 }
 .cell.late {
   background: var(--late-bg);
@@ -517,6 +532,10 @@ input[type='search'] {
   font-weight: 700;
   cursor: pointer;
   background: var(--field);
+  /* 图标 + 文字：原来只有文字，加图标后要对齐 */
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
 }
 .b-present {
   color: var(--present);

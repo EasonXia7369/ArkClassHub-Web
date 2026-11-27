@@ -10,10 +10,15 @@ export const SLOT_LABEL: Record<string, string> = {
   evening: '晚',
 }
 
-export const STATUS_META: Record<string, { label: string; sym: string }> = {
-  present: { label: '出勤', sym: '✓' },
-  leave: { label: '请假', sym: '⭕' },
-  late: { label: '迟到', sym: '□' },
-  absent: { label: '旷课', sym: '×' },
-  violate: { label: '违纪', sym: '△' },
+/**
+ * 考勤状态元数据。
+ * icon 是 Icon.vue 的语义名（lucide）：原先用 ✓⭕□×△ 符号，
+ * 手机上细笔画糊在一起、且不同字体渲染不一致，统一换成矢量图标。
+ */
+export const STATUS_META: Record<string, { label: string; icon: string }> = {
+  present: { label: '出勤', icon: 'statusPresent' },
+  leave: { label: '请假', icon: 'statusLeave' },
+  late: { label: '迟到', icon: 'statusLate' },
+  absent: { label: '旷课', icon: 'statusAbsent' },
+  violate: { label: '违纪', icon: 'statusViolate' },
 }

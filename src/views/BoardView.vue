@@ -9,7 +9,7 @@ import { useChatStore } from '@/stores/chat'
 import QRCode from 'qrcode'
 
 import { useClassStore } from '@/stores/class'
-import { dk, STATUS_META } from '@/utils/dates'
+import { dk } from '@/utils/dates'
 import { useEscClose } from '@/composables/useEscClose'
 import { parentLinkOf } from '@/utils/publicOrigin'
 import Icon from '@/components/Icon.vue'
@@ -382,6 +382,12 @@ const missingMark = ref<{
   picked: Set<number>
 } | null>(null)
 
+/** 项序号标记：用 ① 这类圈码，比「第1项/第2项」短，不抢作业内容的位置 */
+const CIRCLED = '①②③④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑭⑮⑯⑰⑱⑲⑳'
+function noMark(no: number): string {
+  return no >= 0 && no < CIRCLED.length ? CIRCLED[no] : `第${no + 1}项`
+}
+
 /** 该科今天已有的未交记录（按项序号），用于弹窗里选是哪一项 */
 const itemsOfSubject = (subject: string) =>
   hwRecords.value
@@ -437,15 +443,21 @@ function toggleMissing(sid: number) {
 async function saveMissing() {
   if (!missingMark.value) return
   const { subject, itemNo, title, picked } = missingMark.value
-  await put(`/api/classes/${store.current!.id}/hw-records`, {
+  // 作业内容是区分同科多项的唯一依据，空着会让记录变成「未命名」
+  if (!title.trim() && !itemsOfSubject(subject).find((r) => (r.item_no ?? 0) === itemNo)?.title) {
+    toast('请先填写本项作业名称')
+    return
+  }
+  const body: Record<string, unknown> = {
     day: today,
     subject,
     item_no: itemNo,
-    title,
     missing: [...picked],
-  })
-  const tag = title ? `（${title}）` : itemNo ? `（第${itemNo + 1}项）` : ''
-  toast(`${subject}${tag} 未交名单已保存`)
+  }
+  // 只打名单时不要用空字符串覆盖库里已有的名称
+  if (title.trim()) body.title = title.trim()
+  await put(`/api/classes/${store.current!.id}/hw-records`, body)
+  toast(`${subject}（${title.trim() || itemsOfSubject(subject).find((r) => (r.item_no ?? 0) === itemNo)?.title || '未命名'}）未交名单已保存`)
   missingMark.value = null
   await load()
 }
@@ -685,24 +697,24 @@ onMounted(() => {
             v-for="r in itemsOfSubject(missingMark.subject)"
             :key="r.item_no ?? 0"
             class="miss-item"
-            :class="{ on: missingMark.itemNo === (r.item_no ?? 0) }"
+            :class="{ on: missingMark.itemNo === (r.item_no ?? 0), unnamed: !r.title }"
             @click="pickItem(r.item_no ?? 0)"
           >
-            第{{ (r.item_no ?? 0) + 1 }}项<small v-if="r.title"> · {{ r.title }}</small>
+            <span class="miss-item-no">{{ noMark(r.item_no ?? 0) }}</span>{{ r.title || '未命名' }}
           </button>
-          <button v-if="!currentItemSaved" class="miss-item on ghost">
-            第{{ missingMark.itemNo + 1 }}项<small v-if="missingMark.title"> · {{ missingMark.title }}</small>
+          <button v-if="!currentItemSaved" class="miss-item on ghost" :class="{ unnamed: !missingMark.title.trim() }">
+            <span class="miss-item-no">{{ noMark(missingMark.itemNo) }}</span>{{ missingMark.title || '未命名' }}
           </button>
           <button class="miss-item add" @click="addItemInDialog">＋ 新增一项</button>
         </div>
 
-        <label class="flabel" style="margin-top: 10px">本项作业名称（可选，便于区分）</label>
+        <label class="flabel" style="margin-top: 10px">本项作业名称（必填，用于区分同科多项）</label>
         <input
           v-model="missingMark.title"
           class="ginput"
           style="width: 100%"
           maxlength="40"
-          placeholder="如：①背诵课文 ②作文"
+          placeholder="如：背诵课文第3段 / 写作文"
         />
 
         <p class="foot-note" style="margin: 10px 0 0">点姓名标记未交（红色），再点取消。</p>
@@ -720,7 +732,7 @@ onMounted(() => {
         <div style="display: flex; gap: 8px; justify-content: flex-end; margin-top: 14px">
           <button class="gbtn" @click="missingMark = null">取消</button>
           <button class="gbtn primary" @click="saveMissing">
-            保存第{{ missingMark.itemNo + 1 }}项（{{ missingMark.picked.size }} 人未交）
+            保存{{ missingMark.title.trim() ? `「${missingMark.title.trim()}」` : '本项' }}（{{ missingMark.picked.size }} 人未交）
           </button>
         </div>
       </div>
@@ -1155,6 +1167,24 @@ onMounted(() => {
   color: var(--muted);
   cursor: pointer;
   transition: 0.12s;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* 圈码：弱化，只当序号用 */
+.miss-item-no {
+  color: var(--faint);
+  font-weight: 600;
+  margin-right: 4px;
+}
+.miss-item.on .miss-item-no {
+  color: var(--primary);
+}
+/* 未命名的项弱化，提示该给它起个名字 */
+.miss-item.unnamed {
+  color: var(--faint);
+  font-weight: 600;
 }
 .miss-item small {
   font-weight: 400;
