@@ -10,7 +10,9 @@ import { isDesktop, desktopBridge, type ArkWebSyncState } from '@/utils/platform
 import Icon from '@/components/Icon.vue'
 import BrandLogo from '@/components/BrandLogo.vue'
 import ConsentDialog from '@/components/ConsentDialog.vue'
+import UndoBar from '@/components/UndoBar.vue'
 import { useEscClose } from '@/composables/useEscClose'
+import { useUndo } from '@/composables/useUndo'
 
 const route = useRoute()
 const router = useRouter()
@@ -212,6 +214,13 @@ const msgPopupOpen = computed(() => !!chat.popup)
 useEscClose(msgPopupOpen, () => (chat.popup = null))
 const offlineOpen = computed(() => !!chat.offlineSummary)
 useEscClose(offlineOpen, () => (chat.offlineSummary = null))
+
+/* ---------- 撤销栈：退出/切班级时清空 ----------
+ * 撤销是「把旧值写回库里」，跨班级留着会把 A 班的值写到 B 班，所以必须在切换点清掉。
+ * 退出登录同理（下一个账号不该看到上一个账号的可撤销操作）。 */
+const undo = useUndo()
+watch(() => store.current?.id, () => undo.reset())
+watch(() => auth.user?.userId, () => undo.reset())
 </script>
 
 <template>
@@ -414,6 +423,9 @@ useEscClose(offlineOpen, () => (chat.offlineSummary = null))
     </Teleport>
 
     <div v-if="toastMsg" class="gtoast">{{ toastMsg }}</div>
+
+    <!-- 撤销提示条：有可撤销操作时浮在底部（与 gtoast 互斥排队见 useUndo） -->
+    <UndoBar />
 
     <!-- 首次访问（或协议改版后）强制同意：不勾选不能进入 -->
     <ConsentDialog

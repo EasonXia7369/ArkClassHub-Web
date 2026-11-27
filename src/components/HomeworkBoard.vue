@@ -9,11 +9,13 @@ import { exportXlsx } from '@/utils/xlsx'
 import { dk, weekdayCn } from '@/utils/dates'
 import { initialOf } from '@/utils/pinyin'
 import Icon from '@/components/Icon.vue'
+import { useUndo } from '@/composables/useUndo'
 
 const props = defineProps<{ classId: number }>()
 const store = useClassStore()
 const chat = useChatStore()
 const auth = useAuthStore()
+const undo = useUndo()
 
 const isStudent = computed(() => auth.user?.role === 'student')
 
@@ -132,6 +134,30 @@ function toggle(sid: number) {
   missing.value = next
 }
 
+/**
+ * 重载后把选中项对齐到真实存在的记录。
+ * 撤销「新建的那一项」后 itemNo 会停在已不存在的序号上——继续按它删/存都是对着空气操作，
+ * 所以要让选中项回落到第一个仍然存在的项。
+ */
+function resyncSelection() {
+  const list = items.value
+  if (!list.length) {
+    itemNo.value = 0
+    syncEdit()
+    return
+  }
+  if (!list.some((r: any) => (r.item_no ?? 0) === itemNo.value)) {
+    itemNo.value = list[0].item_no ?? 0
+  }
+  syncEdit()
+}
+
+/** 撤销/删除后统一用的重载：拉数据 + 对齐选中项 */
+async function reloadAndResync() {
+  await loadRange()
+  resyncSelection()
+}
+
 async function saveMiss() {
   if (!subject.value.trim()) {
     alert('请先选科目')
@@ -142,23 +168,47 @@ async function saveMiss() {
     alert('请先填写作业内容——同一天同一科有多项时，靠它区分是哪项作业')
     return
   }
+  const cid = props.classId
+  const d = day.value
+  const subj = subject.value.trim()
+  const no = itemNo.value
+  const finalTitle = title.value.trim() || currentRec.value?.title || ''
+  const nextMissing = [...missing.value]
+  // 记下保存前的样子，撤销时原样写回（原来是 null = 这一项此前不存在）
+  const prev = currentRec.value
+    ? { title: currentRec.value.title, missing: [...currentRec.value.missing] as number[] }
+    : null
+
   // 只改名单、没改内容时不要用空字符串覆盖库里的名称
-  const body = {
-    day: day.value,
-    subject: subject.value.trim(),
-    item_no: itemNo.value,
-    missing: [...missing.value],
-  } as Record<string, unknown>
+  const body = { day: d, subject: subj, item_no: no, missing: nextMissing } as Record<string, unknown>
   if (title.value.trim()) body.title = title.value.trim()
-  await put(`/api/classes/${props.classId}/hw-records`, body)
+  await put(`/api/classes/${cid}/hw-records`, body)
   await loadRange()
   // loadRange 后 items 可能新增了这一项，保持停在当前项
   syncEdit()
-}
 
-async function markAllPresent() {
-  missing.value = new Set()
-  await saveMiss()
+  const label = `${d} ${subj} ${noMark(no)}「${finalTitle}」未交名单`
+  undo.push({
+    label,
+    // 撤销可能把「新建的项」删掉，选中项要回落到仍然存在的项
+    reload: reloadAndResync,
+    undo: async () => {
+      if (prev) {
+        await put(`/api/classes/${cid}/hw-records`, {
+          day: d,
+          subject: subj,
+          item_no: no,
+          title: prev.title,
+          missing: prev.missing,
+        })
+      } else {
+        // 保存前这一项不存在 → 撤销 = 撤回新建的那一项
+        await del(
+          `/api/classes/${cid}/hw-records?day=${d}&subject=${encodeURIComponent(subj)}&item_no=${no}`,
+        )
+      }
+    },
+  })
 }
 
 async function deleteCurrent() {
@@ -167,14 +217,35 @@ async function deleteCurrent() {
     ? `「${currentRec.value.title}」`
     : `${noMark(itemNo.value)}（未命名）`
   if (!confirm(`删除 ${day.value} ${subject.value} 的${label}？`)) return
-  const q =
-    `/api/classes/${props.classId}/hw-records?day=${day.value}&subject=${encodeURIComponent(subject.value.trim())}` +
-    `&item_no=${itemNo.value}`
-  await del(q)
+  const cid = props.classId
+  const d = day.value
+  const subj = subject.value.trim()
+  const no = itemNo.value
+  // 删除是软删（deleted = 1），撤销时把原记录按原样写回即可（PUT 会把 deleted 复位）
+  const snapshot = currentRec.value
+    ? { title: currentRec.value.title, missing: [...currentRec.value.missing] as number[] }
+    : null
+  await del(
+    `/api/classes/${cid}/hw-records?day=${d}&subject=${encodeURIComponent(subj)}&item_no=${no}`,
+  )
   await loadRange()
-  // 删掉当前项后回到第一项
-  itemNo.value = items.value.length ? (items.value[0].item_no ?? 0) : 0
-  syncEdit()
+  // 删掉当前项后选中项要回落（原来写死回第一项，多删几次会对不上）
+  resyncSelection()
+
+  if (snapshot) {
+    undo.push({
+      label: `删除 ${d} ${subj} ${noMark(no)}「${snapshot.title || '未命名'}」`,
+      reload: reloadAndResync,
+      undo: () =>
+        put(`/api/classes/${cid}/hw-records`, {
+          day: d,
+          subject: subj,
+          item_no: no,
+          title: snapshot.title,
+          missing: snapshot.missing,
+        }),
+    })
+  }
 }
 
 /* ---------- 统计 ---------- */
@@ -267,12 +338,21 @@ async function saveTask() {
     alert('请先选科目')
     return
   }
-  await put(`/api/classes/${props.classId}/hw-tasks`, {
-    day: taskDay.value,
-    subject: taskSubject.value.trim(),
-    content: taskContent.value,
-  })
+  const cid = props.classId
+  const d = taskDay.value
+  const subj = taskSubject.value.trim()
+  const next = taskContent.value
+  const prev = dayTasks.value.find((t) => t.subject === subj)?.content ?? ''
+  await put(`/api/classes/${cid}/hw-tasks`, { day: d, subject: subj, content: next })
   await loadRange()
+
+  if (prev !== next) {
+    undo.push({
+      label: `${d} ${subj} 作业布置`,
+      reload: loadRange,
+      undo: () => put(`/api/classes/${cid}/hw-tasks`, { day: d, subject: subj, content: prev }),
+    })
+  }
 }
 
 /* ---------- 区间作业记录（回填 / 删除） ---------- */
@@ -291,10 +371,26 @@ async function loadMiss(r: any) {
 async function deleteMiss(r: any) {
   const label = r.title ? `「${r.title}」` : `${noMark(r.item_no ?? 0)}（未命名）`
   if (!confirm(`删除 ${r.day} ${r.subject} 的${label}？`)) return
+  const cid = props.classId
+  const no = r.item_no ?? 0
+  const snapshot = { title: r.title ?? '', missing: [...r.missing] as number[] }
   await del(
-    `/api/classes/${props.classId}/hw-records?day=${r.day}&subject=${encodeURIComponent(r.subject)}&item_no=${r.item_no ?? 0}`,
+    `/api/classes/${cid}/hw-records?day=${r.day}&subject=${encodeURIComponent(r.subject)}&item_no=${no}`,
   )
   await loadRange()
+
+  undo.push({
+    label: `删除 ${r.day} ${r.subject} ${noMark(no)}「${snapshot.title || '未命名'}」`,
+    reload: loadRange,
+    undo: () =>
+      put(`/api/classes/${cid}/hw-records`, {
+        day: r.day,
+        subject: r.subject,
+        item_no: no,
+        title: snapshot.title,
+        missing: snapshot.missing,
+      }),
+  })
 }
 
 function loadTask(t: any) {
@@ -454,8 +550,7 @@ watch([histFrom, histTo], () => {
       </div>
     </div>
     <p class="foot-note">
-      已选 {{ missing.size }} 人未交。点姓名切换状态，
-      <a class="lnk" @click="markAllPresent">一键全部交齐</a> ·
+      已选 {{ missing.size }} 人未交。点姓名切换状态 ·
       <a class="lnk danger" @click="deleteCurrent">删除当前项</a>
       <button class="btn primary save-btn" @click="saveMiss">保存</button>
     </p>

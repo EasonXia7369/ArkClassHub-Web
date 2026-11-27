@@ -31,6 +31,7 @@ import {
   Sparkles,
   Sun,
   TriangleAlert,
+  Undo2,
   Upload,
   UserCog,
   Users,
@@ -74,6 +75,7 @@ const MAP: Record<string, Component> = {
   send: Send,
   sparkles: Sparkles,
   logout: LogOut,
+  undo: Undo2,
   /* ---------- 考勤状态（原 ✓⭕□×△ 符号换成矢量图标） ----------
    * 语义与配色对应 --present/--leave/--late/--absent/--violate */
   statusPresent: CircleCheck,

@@ -9,11 +9,13 @@ import { STATUS_META, SLOT_LABEL, dk, weekdayCn } from '@/utils/dates'
 import Icon from '@/components/Icon.vue'
 import { pinyinInitial, initialOf } from '@/utils/pinyin'
 import { useEscClose } from '@/composables/useEscClose'
+import { useUndo } from '@/composables/useUndo'
 
 const props = defineProps<{ classId: number }>()
 const store = useClassStore()
 const identity = useIdentityStore()
 const chat = useChatStore()
+const undo = useUndo()
 
 const day = ref(dk())
 const records = ref<Map<string, { status: string; note: string }>>(new Map())
@@ -118,18 +120,42 @@ async function saveNote() {
 
 async function clearCell() {
   if (!pop.value) return
-  records.value.delete(`${pop.value.sid}|${pop.value.slot}`)
-  await put(`/api/classes/${props.classId}/attendance`, {
-    day: day.value,
-    entries: [{ student_id: pop.value.sid, slot: pop.value.slot, status: 'present' }],
+  const cid = props.classId
+  const d = day.value
+  const { sid, slot, name } = pop.value
+  // 清格 = 服务端删记录（status: 'present'）；撤销就是把原状态写回
+  const prev = records.value.get(`${sid}|${slot}`)
+  records.value.delete(`${sid}|${slot}`)
+  await put(`/api/classes/${cid}/attendance`, {
+    day: d,
+    entries: [{ student_id: sid, slot, status: 'present' }],
   })
   pop.value = null
+
+  if (prev) {
+    const prevStatus = prev.status
+    const prevNote = prev.note
+    undo.push({
+      label: `${d} ${name} · ${SLOT_LABEL[slot]} 清除标记`,
+      reload: load,
+      undo: () =>
+        put(`/api/classes/${cid}/attendance`, {
+          day: d,
+          entries: [{ student_id: sid, slot, status: prevStatus, note: prevNote }],
+        }),
+    })
+  }
 }
 
 async function saveEntry(status: string, note: string) {
-  const { sid, slot } = pop.value!
-  await put(`/api/classes/${props.classId}/attendance`, {
-    day: day.value,
+  if (!pop.value) return
+  const cid = props.classId
+  const d = day.value
+  const { sid, slot, name } = pop.value
+  // 记录旧值：撤销时原样写回；此前没有记录就用 present（服务端会把该格删掉）
+  const prev = records.value.get(`${sid}|${slot}`)
+  await put(`/api/classes/${cid}/attendance`, {
+    day: d,
     actor_student_id: identity.studentId ?? undefined,
     entries: [{ student_id: sid, slot, status, note }],
   })
@@ -138,6 +164,25 @@ async function saveEntry(status: string, note: string) {
   } else {
     records.value.set(`${sid}|${slot}`, { status, note })
   }
+
+  const label = `${d} ${name} · ${SLOT_LABEL[slot]} ${STATUS_META[status]?.label ?? status}`
+  if (prev?.status === status && (prev?.note ?? '') === note) return // 值没变，不必进撤销栈
+  undo.push({
+    label,
+    reload: load,
+    undo: () =>
+      put(`/api/classes/${cid}/attendance`, {
+        day: d,
+        entries: [
+          {
+            student_id: sid,
+            slot,
+            status: prev?.status ?? 'present',
+            note: prev?.note ?? '',
+          },
+        ],
+      }),
+  })
 }
 
 useEscClose(pop, () => (pop.value = null))
