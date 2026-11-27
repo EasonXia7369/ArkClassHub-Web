@@ -11,6 +11,7 @@ import Icon from '@/components/Icon.vue'
 import BrandLogo from '@/components/BrandLogo.vue'
 import ConsentDialog from '@/components/ConsentDialog.vue'
 import UndoBar from '@/components/UndoBar.vue'
+import UndoHistory from '@/components/UndoHistory.vue'
 import { useEscClose } from '@/composables/useEscClose'
 import { useUndo } from '@/composables/useUndo'
 
@@ -221,6 +222,9 @@ useEscClose(offlineOpen, () => (chat.offlineSummary = null))
 const undo = useUndo()
 watch(() => store.current?.id, () => undo.reset())
 watch(() => auth.user?.userId, () => undo.reset())
+
+/** 撤销历史面板（侧栏/顶栏按钮打开） */
+const undoOpen = ref(false)
 </script>
 
 <template>
@@ -250,6 +254,14 @@ watch(() => auth.user?.userId, () => undo.reset())
         </RouterLink>
       </nav>
       <div class="rail-foot">
+        <!-- 撤销历史：有记录时才出现角标，空的时候仍可点开看说明 -->
+        <button class="rail-item" title="撤销历史" @click="undoOpen = true">
+          <span class="undo-icon-wrap">
+            <Icon name="undo" :size="20" />
+            <b v-if="undo.depth.value" class="badge">{{ undo.depth.value > 30 ? '30+' : undo.depth.value }}</b>
+          </span>
+          <span>撤销</span>
+        </button>
         <button v-if="isDesktop" class="rail-item" title="桌面设置" @click="deskPop = !deskPop">
           <Icon name="manage" :size="20" />
           <span>桌面</span>
@@ -285,6 +297,12 @@ watch(() => auth.user?.userId, () => undo.reset())
         </div>
         <div class="top-right">
           <span class="whoami"><span class="whoami-name">{{ auth.user?.name }}</span><i v-if="auth.user?.role === 'admin'">管理员</i><i v-else-if="auth.user?.role === 'student'">值日生</i></span>
+          <button class="gbtn icon topbtn" title="撤销历史" @click="undoOpen = true">
+            <span class="undo-icon-wrap">
+              <Icon name="undo" :size="17" />
+              <b v-if="undo.depth.value" class="badge">{{ undo.depth.value > 30 ? '30+' : undo.depth.value }}</b>
+            </span>
+          </button>
           <button class="gbtn icon topbtn" title="关于" @click="router.push('/about')">
             <Icon name="info" :size="17" />
           </button>
@@ -426,6 +444,8 @@ watch(() => auth.user?.userId, () => undo.reset())
 
     <!-- 撤销提示条：有可撤销操作时浮在底部（与 gtoast 互斥排队见 useUndo） -->
     <UndoBar />
+    <!-- 撤销历史面板：侧栏/顶栏按钮打开 -->
+    <UndoHistory :open="undoOpen" @close="undoOpen = false" />
 
     <!-- 首次访问（或协议改版后）强制同意：不勾选不能进入 -->
     <ConsentDialog
@@ -445,6 +465,11 @@ watch(() => auth.user?.userId, () => undo.reset())
   min-height: 100vh;
 }
 .nav-icon-wrap {
+  position: relative;
+  display: inline-flex;
+}
+/* 撤销按钮的角标容器（顶栏与侧栏共用） */
+.undo-icon-wrap {
   position: relative;
   display: inline-flex;
 }
@@ -668,7 +693,8 @@ watch(() => auth.user?.userId, () => undo.reset())
 .topbtn {
   flex: none;
 }
-/* 桌面端深浅色/退出在侧栏底部，顶栏图标按钮仅手机端（侧栏隐藏时）出现 */
+/* 桌面端深浅色/退出在侧栏底部，顶栏图标按钮仅手机端（侧栏隐藏时）出现。
+ * 撤销历史同理：桌面端走侧栏底部那个按钮，顶栏这个自动被这条规则一并隐藏。 */
 @media (min-width: 861px) {
   .gbtn.icon.topbtn {
     display: none;

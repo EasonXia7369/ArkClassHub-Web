@@ -1,7 +1,9 @@
 <script setup lang="ts">
 /**
- * 撤销提示条：底部浮起，显示「已保存 xx」+ 撤销按钮 + 关闭。
- * 只在有可撤销操作时出现——平时不占位、不干扰。
+ * 撤销提示条：底部浮起，显示「刚做了什么」+ 撤销按钮 + 关闭。
+ *
+ * 显示时机由 useUndo 的 barShowing 控制：新操作后弹出，9 秒后自己收起——
+ * 收起只是不挡视线，历史仍留在撤销面板里（侧栏/顶栏的「撤销」入口）。
  */
 import { useUndo } from '@/composables/useUndo'
 import Icon from '@/components/Icon.vue'
@@ -11,7 +13,7 @@ const undo = useUndo()
 
 <template>
   <Teleport to="body">
-    <div v-if="undo.current.value" class="undo-bar">
+    <div v-if="undo.barShowing.value && undo.current.value" class="undo-bar">
       <span class="undo-text">
         <b>{{ undo.current.value.label }}</b>
         <template v-if="undo.depth.value > 1">（还可撤销 {{ undo.depth.value }} 步）</template>
@@ -21,7 +23,7 @@ const undo = useUndo()
         <Icon name="undo" :size="14" />
         {{ undo.busy.value ? '撤销中…' : '撤销' }}
       </button>
-      <button class="undo-close" title="关闭" @click="undo.dismiss()">
+      <button class="undo-close" title="关闭提示（历史仍可在侧栏查看）" @click="undo.hideBar()">
         <Icon name="x" :size="13" />
       </button>
     </div>

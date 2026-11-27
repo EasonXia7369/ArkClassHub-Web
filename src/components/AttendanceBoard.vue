@@ -137,6 +137,7 @@ async function clearCell() {
     const prevNote = prev.note
     undo.push({
       label: `${d} ${name} · ${SLOT_LABEL[slot]} 清除标记`,
+      kind: 'attendance',
       reload: load,
       undo: () =>
         put(`/api/classes/${cid}/attendance`, {
@@ -169,6 +170,7 @@ async function saveEntry(status: string, note: string) {
   if (prev?.status === status && (prev?.note ?? '') === note) return // 值没变，不必进撤销栈
   undo.push({
     label,
+    kind: 'attendance',
     reload: load,
     undo: () =>
       put(`/api/classes/${cid}/attendance`, {

@@ -190,6 +190,7 @@ async function saveMiss() {
   const label = `${d} ${subj} ${noMark(no)}「${finalTitle}」未交名单`
   undo.push({
     label,
+    kind: 'homework',
     // 撤销可能把「新建的项」删掉，选中项要回落到仍然存在的项
     reload: reloadAndResync,
     undo: async () => {
@@ -235,6 +236,7 @@ async function deleteCurrent() {
   if (snapshot) {
     undo.push({
       label: `删除 ${d} ${subj} ${noMark(no)}「${snapshot.title || '未命名'}」`,
+      kind: 'homework',
       reload: reloadAndResync,
       undo: () =>
         put(`/api/classes/${cid}/hw-records`, {
@@ -349,6 +351,7 @@ async function saveTask() {
   if (prev !== next) {
     undo.push({
       label: `${d} ${subj} 作业布置`,
+      kind: 'homework',
       reload: loadRange,
       undo: () => put(`/api/classes/${cid}/hw-tasks`, { day: d, subject: subj, content: prev }),
     })
@@ -381,6 +384,7 @@ async function deleteMiss(r: any) {
 
   undo.push({
     label: `删除 ${r.day} ${r.subject} ${noMark(no)}「${snapshot.title || '未命名'}」`,
+    kind: 'homework',
     reload: loadRange,
     undo: () =>
       put(`/api/classes/${cid}/hw-records`, {
