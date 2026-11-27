@@ -535,14 +535,14 @@ async function openComments() {
   }
 }
 
-async function genOneComment(sid: number) {
+async function genOneComment(sid: number, force = false) {
   const entry = comments.value[sid]
   if (entry?.busy) return
   comments.value[sid] = { text: entry?.text ?? '', updated_at: entry?.updated_at ?? '', busy: true }
   try {
-    const res = await post<{ comment: { text: string; updated_at: string } }>(
+    const res = await post<{ comment: { text: string; updated_at: string }; cached?: boolean }>(
       `/api/classes/${store.current!.id}/exams/${exam.value!.id}/comments`,
-      { student_id: sid },
+      { student_id: sid, force },
     )
     comments.value[sid] = { text: res.comment.text, updated_at: res.comment.updated_at }
   } catch (e: any) {
@@ -550,7 +550,10 @@ async function genOneComment(sid: number) {
   }
 }
 
-/** 全班一键：并发 3 个逐生生成，进度条可见；失败的可单独重试 */
+/** 全班一键：并发 3 个逐生生成，进度条可见；失败的可单独重试
+ *  已有评语的学生不带 force——服务端数据没变就直接复用，不重复消耗额度；
+ *  想覆盖某一条用每行的「重新生成」。
+ *  老师手动改过的评语，服务端已把 fp 置空，全班一键不会把 AI 原文写回来。 */
 async function genAllComments() {
   if (genAllBusy.value) return
   const targets = students.value.filter((s) => s.active)
@@ -565,10 +568,11 @@ async function genAllComments() {
       const prev = comments.value[s.id]
       comments.value[s.id] = { text: prev?.text ?? '', updated_at: prev?.updated_at ?? '', busy: true }
       try {
-        const res = await post<{ comment: { text: string; updated_at: string } }>(
+        const res = await post<{ comment: { text: string; updated_at: string }; cached?: boolean }>(
           `/api/classes/${store.current!.id}/exams/${exam.value!.id}/comments`,
           { student_id: s.id },
         )
+        // 服务端保证：老师改过的评语（fp 已置空）不会被 AI 原文覆盖
         comments.value[s.id] = { text: res.comment.text, updated_at: res.comment.updated_at }
       } catch (e: any) {
         comments.value[s.id] = { text: prev?.text ?? '', updated_at: prev?.updated_at ?? '', error: e.message }
@@ -1198,7 +1202,7 @@ useEscClose(trendStudent, () => (trendStudent.value = null))
                 v-if="!editingSid || editingSid !== s.id"
                 class="gmini"
                 :disabled="comments[s.id]?.busy || genAllBusy"
-                @click="genOneComment(s.id)"
+                @click="genOneComment(s.id, !!comments[s.id]?.text)"
               >
                 {{ comments[s.id]?.busy ? '生成中…' : comments[s.id]?.text ? '重新生成' : '生成' }}
               </button>
