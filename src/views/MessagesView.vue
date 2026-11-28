@@ -818,9 +818,9 @@ useEscClose(previewImage, () => (previewImage.value = null))
 }
 .quickbar {
   display: flex;
+  flex-wrap: wrap;
   gap: 6px;
   padding: 8px 16px 0;
-  overflow-x: auto;
   scrollbar-width: none;
 }
 .quickbar::-webkit-scrollbar {

@@ -569,15 +569,20 @@ watch([histFrom, histTo], () => {
     </div>
 
     <div class="card tablecard">
-      <div class="table-scroll">
+      <div class="table-scroll sticky-first">
       <table class="stats">
         <thead>
-          <tr><th class="c-idx">#</th><th class="c-name">姓名</th><th class="c-count">未交次数</th><th class="c-detail">未交明细</th></tr>
+          <tr>
+            <th class="c-idx sticky" style="--stick-left: 0">#</th>
+            <th class="c-name sticky" style="--stick-left: 22px">姓名</th>
+            <th class="c-count">未交次数</th>
+            <th class="c-detail">未交明细</th>
+          </tr>
         </thead>
         <tbody>
           <tr v-for="(s, i) in perStudent" :key="s.id">
-            <td class="idx">{{ i + 1 }}</td>
-            <td class="name">{{ s.name }}</td>
+            <td class="idx sticky" style="--stick-left: 0">{{ i + 1 }}</td>
+            <td class="name sticky" style="--stick-left: 22px">{{ s.name }}</td>
             <td :class="{ nz: s.count }">{{ s.count || '' }}</td>
             <td class="vio">{{ s.detail.join('；') }}</td>
           </tr>
@@ -857,6 +862,11 @@ watch([histFrom, histTo], () => {
     padding: 8px 4px;
     font-size: 12.5px;
     border-radius: 8px;
+  }
+  /* 明细列最小宽度：触发横滚而非挤压次数列 */
+  .stats th.c-detail,
+  .stats td.vio {
+    min-width: 240px;
   }
 }
 .stu {

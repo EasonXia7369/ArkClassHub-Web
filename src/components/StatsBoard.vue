@@ -183,6 +183,25 @@ async function doExport() {
     </div>
   </div>
 
+  <!-- 手机端：每人一张横条卡（桌面显示上方表格，≤700px 显示这里） -->
+  <div class="card stat-cards">
+    <div v-for="(s, i) in sortedStats" :key="s.id" class="stat-row" :class="{ clean: !s.total }">
+      <div class="row-head">
+        <span class="idx">{{ i + 1 }}</span>
+        <b class="name">{{ s.name }}</b>
+        <span class="total" :class="{ bad: s.total > 0 }">合计 {{ s.total || 0 }}</span>
+      </div>
+      <div class="chips">
+        <span class="chip" :class="{ nz: s.leave > 0 }">请假 {{ s.leave || 0 }}</span>
+        <span class="chip" :class="{ nz: s.late > 0 }">迟到 {{ s.late || 0 }}</span>
+        <span class="chip" :class="{ nz: s.absent > 0 }">旷课 {{ s.absent || 0 }}</span>
+        <span class="chip" :class="{ nz: s.violate > 0 }">违纪 {{ s.violate || 0 }}</span>
+      </div>
+      <p v-if="violationText.get(s.id)" class="vio-line">{{ violationText.get(s.id) }}</p>
+    </div>
+    <p v-if="!sortedStats.length" class="empty" style="padding: 14px">本月暂无数据</p>
+  </div>
+
   <div v-if="data" class="card" style="margin-top: 12px">
     <div class="pad">
       <h3 class="sec-title">违纪记录明细 <em>{{ data.violations.length }}</em></h3>
@@ -332,6 +351,81 @@ async function doExport() {
 .empty {
   color: var(--faint);
   font-size: 12.5px;
+}
+/* ---------- 手机端卡片视图（≤700px 用卡片替代表格） ---------- */
+.stat-cards {
+  display: none;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+}
+.stat-row {
+  border: 1px solid var(--line-soft);
+  border-radius: 12px;
+  padding: 10px 12px;
+  background: var(--field);
+}
+.stat-row.clean {
+  opacity: 0.75;
+}
+.row-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.row-head .idx {
+  color: var(--faint);
+  font-size: 12px;
+  width: 20px;
+  flex: none;
+}
+.row-head .name {
+  font-size: 14.5px;
+  flex: 1;
+}
+.row-head .total {
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.row-head .total.bad {
+  color: var(--absent);
+}
+.chips {
+  display: flex;
+  gap: 6px;
+  margin-top: 8px;
+  flex-wrap: wrap;
+}
+.chip {
+  font-size: 12px;
+  padding: 4px 9px;
+  border-radius: 999px;
+  background: var(--panel);
+  border: 1px solid var(--line-soft);
+  color: var(--faint);
+  font-variant-numeric: tabular-nums;
+}
+.chip.nz {
+  color: var(--absent);
+  border-color: var(--absent);
+  background: var(--absent-bg, rgba(255, 59, 48, 0.1));
+  font-weight: 700;
+}
+.vio-line {
+  margin: 8px 0 0;
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.5;
+}
+@media (max-width: 700px) {
+  .tablecard {
+    display: none;
+  }
+  .stat-cards {
+    display: flex;
+  }
 }
 .foot-note {
   color: var(--faint);

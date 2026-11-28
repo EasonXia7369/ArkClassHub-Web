@@ -1059,12 +1059,12 @@ useEscClose(trendStudent, () => (trendStudent.value = null))
       </div>
 
       <!-- 成绩表 / 录分矩阵 -->
-      <div class="table-scroll" style="margin-top: 14px">
+      <div class="table-scroll sticky-first" style="margin-top: 14px">
         <table class="gtable score-table" :class="{ 'with-rank': showRankCols }">
           <thead>
             <tr>
-              <th style="width: 34px">#</th>
-              <th style="text-align: left">姓名</th>
+              <th class="sticky" style="width: 34px; --stick-left: 0">#</th>
+              <th class="sticky" style="text-align: left; --stick-left: 34px">姓名</th>
               <template v-for="sub in exam.subjects" :key="sub.subject">
                 <th>{{ sub.subject }}</th>
                 <template v-if="showRankCols">
@@ -1078,8 +1078,8 @@ useEscClose(trendStudent, () => (trendStudent.value = null))
           </thead>
           <tbody>
             <tr v-for="(s, i) in students" :key="s.id" :class="{ off: !s.active }">
-              <td class="num">{{ s.seq }}</td>
-              <td style="text-align: left">{{ s.name }}</td>
+              <td class="num sticky" style="--stick-left: 0">{{ s.seq }}</td>
+              <td class="sticky" style="text-align: left; --stick-left: 34px">{{ s.name }}</td>
               <template v-for="sub in exam.subjects" :key="sub.subject">
                 <td>
                   <template v-if="editing">

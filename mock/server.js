@@ -224,7 +224,11 @@ const routes = [
   ['POST', /^\/api\/auth\/login$/, () => ({ token: 'mock-token', user })],
   ['POST', /^\/api\/auth\/logout$/, () => ok],
   ['POST', /^\/api\/auth\/password$/, () => ok],
-  ['GET', /^\/api\/auth\/me$/, () => ({ user })],
+  ['POST', /^\/api\/auth\/consent$/, (m, q, body) => ({ consent: { version: body.version ?? 'mock', agreed: true, consented_at: new Date().toISOString() } })],
+  ['GET', /^\/api\/auth\/me$/, () => ({
+    user,
+    consent: { version: 'mock', agreed: true, consented_at: new Date().toISOString() },
+  })],
 
   ['GET', /^\/api\/ai\/status$/, () => ({ enabled: true })],
   ['GET', /^\/api\/push\/config$/, () => ({ enabled: false })],
@@ -284,6 +288,26 @@ const routes = [
     return { week_start: week, days }
   }],
   ['GET', /^\/api\/classes\/(\d+)\/timetable$/, () => ({ timetable })],
+  // 考勤统计（月度/按天）：聚合本月考勤 + 明细 + 违纪
+  ['GET', /^\/api\/classes\/(\d+)\/attendance\/stats$/, (m, q) => {
+    const month = q.get('month') ?? todayStr().slice(0, 7)
+    const rows = [...attendanceMap.entries()]
+      .map(([key, r]) => ({ ...r, day: key.split('|')[2] }))
+      .filter((r) => r.day?.startsWith(month))
+    const stats = students.map((s) => {
+      const st = { id: s.id, name: s.name, leave: 0, late: 0, absent: 0, violate: 0, total: 0 }
+      for (const r of rows) if (r.student_id === s.id && st[r.status] !== undefined) { st[r.status]++; st.total++ }
+      return st
+    })
+    const details = rows.map((r) => ({ day: r.day, name: students.find((s) => s.id === r.student_id)?.name ?? '', slot: r.slot, status: r.status, note: r.note }))
+    const violations = rows.filter((r) => r.status === 'violate').map((r) => ({ day: r.day, name: students.find((s) => s.id === r.student_id)?.name ?? '', slot: r.slot, note: r.note }))
+    return {
+      range: { from: `${month}-01`, to: todayStr() },
+      stats,
+      details,
+      violations,
+    }
+  }],
   ['GET', /^\/api\/classes\/(\d+)\/timetable\/today$/, () => {
     const day = todayStr()
     return { day, weekday: weekdayOf(day), periods: timetable.filter((t) => t.weekday === weekdayOf(day)) }
@@ -296,7 +320,17 @@ const routes = [
       const d = mockDetailCache.get(e.id)
       const subjectAvgs = {}
       for (const sub of e.subjects) subjectAvgs[sub.subject] = d.stats[sub.subject].avg
-      return { exam_id: e.id, name: e.name, day: e.day, subjectAvgs }
+      const totalFull = e.subjects.reduce((a, s) => a + s.full, 0)
+      const avgTotal = Object.values(subjectAvgs).reduce((a, v) => a + (v ?? 0), 0)
+      return {
+        exam_id: e.id,
+        name: e.name,
+        day: e.day,
+        subjectAvgs,
+        totalAvg: Math.round(avgTotal * 10) / 10,
+        totalFull,
+        subjects: e.subjects.map((s) => ({ subject: s.subject, full: s.full })),
+      }
     }),
     students: students.map((s) => ({
       id: s.id,

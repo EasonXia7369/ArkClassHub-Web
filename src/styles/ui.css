@@ -268,6 +268,38 @@
   -webkit-overflow-scrolling: touch;
 }
 
+/* ---------- 手机端宽表：横向滚动 + 序号/姓名列吸附 ----------
+ * 用法：table-scroll 加 .sticky-first，需要吸附的 th/td 加 .sticky 并给行内
+ * style="--stick-left: 34px"（该列左侧累计宽度）。
+ * 吸附列必须用不透明底色，否则滚动时下层文字透出。 */
+@media (max-width: 700px) {
+  .table-scroll.sticky-first table {
+    width: max-content;
+    min-width: 100%;
+  }
+  .table-scroll.sticky-first .sticky {
+    position: sticky;
+    left: var(--stick-left, 0);
+    z-index: 2;
+    background: var(--sticky-col-bg, #f4f4f8);
+  }
+  .table-scroll.sticky-first .sticky::after {
+    /* 吸附列右缘阴影，暗示右侧还有列 */
+    content: '';
+    position: absolute;
+    top: 0;
+    right: 0;
+    bottom: -1px;
+    width: 10px;
+    transform: translateX(100%);
+    background: linear-gradient(to right, rgba(0, 0, 0, 0.09), transparent);
+    pointer-events: none;
+  }
+  html.dark {
+    --sticky-col-bg: #202024;
+  }
+}
+
 .gtable {
   width: 100%;
   border-collapse: collapse;
@@ -431,4 +463,24 @@ table {
 
 .ok-text {
   color: var(--present);
+}
+
+/* ---------- 手机端触控目标：主按钮/输入 ≥40px 高（iOS HIG / WCAG） ---------- */
+@media (max-width: 700px) {
+  .gbtn {
+    padding: 11px 16px;
+    font-size: 14px;
+    min-height: 40px;
+  }
+  .gmini {
+    padding: 10px 14px;
+    font-size: 13px;
+    min-height: 38px;
+  }
+  .ginput,
+  .gselect,
+  .gtextarea {
+    min-height: 40px;
+    font-size: 15px; /* ≥16px 可防 iOS 聚焦自动放大；15px + zoom 兼顾布局 */
+  }
 }

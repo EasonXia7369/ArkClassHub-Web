@@ -11,6 +11,7 @@ import { useAi } from '@/composables/useAi'
 import { maskZh } from '@/utils/mask'
 import { weekdayCn } from '@/utils/dates'
 import { parentLinkOf } from '@/utils/publicOrigin'
+import { useEscClose } from '@/composables/useEscClose'
 import Icon from '@/components/Icon.vue'
 import ReportSheet from '@/components/report/ReportSheet.vue'
 import type { ReportVM } from '@/components/report/ReportSheet.vue'
@@ -128,6 +129,10 @@ watch([from, to, () => props.classId], async () => {
 
 /* ---------- 脱敏开关 ---------- */
 const masked = ref(false)
+
+/* 手机端「⋯」操作面板 */
+const moreOpen = ref(false)
+useEscClose(moreOpen, () => (moreOpen.value = false))
 const nm = (name: string) => (masked.value ? maskZh(name) : name)
 
 /* ---------- 视图模型 ---------- */
@@ -477,23 +482,56 @@ async function exportXlsxReport() {
         <button class="seg-btn" :class="{ on: mode === 'custom' }" @click="mode = 'custom'">自定义</button>
       </div>
 
-      <label class="mask-toggle gmini" :class="{ on: masked }" title="导出时姓名脱敏（张三→张S）">
+      <label class="mask-toggle gmini desk-only" :class="{ on: masked }" title="导出时姓名脱敏（张三→张S）">
         <input v-model="masked" type="checkbox" /> 姓名脱敏
       </label>
 
       <span class="spacer" />
 
-      <button v-if="aiEnabled" class="gmini ai-btn" :disabled="aiBusy || loading" @click="genSummary(aiText ? true : false)">
+      <button v-if="aiEnabled" class="gmini ai-btn desk-only" :disabled="aiBusy || loading" @click="genSummary(aiText ? true : false)">
         <Icon name="sparkles" :size="14" /> {{ aiBusy ? '生成中…' : aiText ? '重新生成' : 'AI 总结' }}
       </button>
-      <button v-if="aiEnabled && examDetail" class="gmini ai-btn" :disabled="diagBusy || loading" @click="genDiagnosis(!!diagnosis)">
+      <button v-if="aiEnabled && examDetail" class="gmini ai-btn desk-only" :disabled="diagBusy || loading" @click="genDiagnosis(!!diagnosis)">
         <Icon name="sparkles" :size="14" /> {{ diagBusy ? '分析中…' : diagnosis ? '重新诊断' : 'AI 考试诊断' }}
       </button>
-      <button class="gbtn" :disabled="!report || loading" @click="exportXlsxReport"><Icon name="download" :size="15" /> Excel</button>
+      <button class="gbtn desk-only" :disabled="!report || loading" @click="exportXlsxReport"><Icon name="download" :size="15" /> Excel</button>
       <button class="gbtn primary" :disabled="!report || loading || exporting" @click="exportImage">
         <Icon name="image" :size="15" /> {{ exporting ? '生成中…' : '生成图片' }}
       </button>
+      <!-- 手机端收纳：AI/脱敏/Excel 进「⋯」 -->
+      <button class="gbtn more-btn" aria-label="更多操作" @click="moreOpen = true">
+        <Icon name="more" :size="16" />
+      </button>
     </div>
+
+    <!-- 手机端「⋯」操作面板 -->
+    <Teleport to="body">
+      <div v-if="moreOpen" class="gbackdrop" @click.self="moreOpen = false">
+        <div class="gpop more-pop">
+          <h3 class="sec-title">更多操作</h3>
+          <button v-if="aiEnabled" class="more-item" :disabled="aiBusy || loading" @click="genSummary(aiText ? true : false); moreOpen = false">
+            <Icon name="sparkles" :size="16" />
+            <span class="mi-label">{{ aiBusy ? '生成中…' : aiText ? '重新 AI 总结' : 'AI 总结' }}</span>
+            <Icon name="chevronRight" :size="15" />
+          </button>
+          <button v-if="aiEnabled && examDetail" class="more-item" :disabled="diagBusy || loading" @click="genDiagnosis(!!diagnosis); moreOpen = false">
+            <Icon name="sparkles" :size="16" />
+            <span class="mi-label">{{ diagBusy ? '分析中…' : diagnosis ? '重新 AI 考试诊断' : 'AI 考试诊断' }}</span>
+            <Icon name="chevronRight" :size="15" />
+          </button>
+          <button class="more-item" @click="masked = !masked">
+            <Icon name="info" :size="16" />
+            <span class="mi-label">姓名脱敏（张三 → 张S）</span>
+            <span class="mi-state" :class="{ on: masked }">{{ masked ? '开' : '关' }}</span>
+          </button>
+          <button class="more-item" :disabled="!report || loading" @click="exportXlsxReport(); moreOpen = false">
+            <Icon name="download" :size="16" />
+            <span class="mi-label">导出 Excel</span>
+            <Icon name="chevronRight" :size="15" />
+          </button>
+        </div>
+      </div>
+    </Teleport>
 
     <p v-if="aiError || diagError" class="ai-error">{{ aiError || diagError }}</p>
     <div v-if="aiText" class="ai-copy card">
@@ -543,6 +581,45 @@ async function exportXlsxReport() {
 }
 .pad { padding: 32px; }
 .center { text-align: center; color: var(--muted, #6e6e73); }
+/* ---------- 手机端工具栏收纳 ---------- */
+.more-btn { display: none; padding: 11px 12px; }
+.more-pop { width: min(320px, 86vw); }
+.more-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 13px 12px;
+  border: none;
+  background: transparent;
+  border-radius: 10px;
+  font-family: inherit;
+  font-size: 14.5px;
+  color: var(--text);
+  cursor: pointer;
+  text-align: left;
+}
+.more-item:active { background: var(--field); }
+.more-item:disabled { opacity: 0.5; }
+.more-item .mi-label { flex: 1; font-weight: 500; }
+.more-item .mi-state {
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--muted);
+  padding: 3px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+}
+.more-item .mi-state.on { color: #fff; background: var(--accent, #007aff); border-color: transparent; }
+@media (max-width: 700px) {
+  .desk-only { display: none !important; }
+  .more-btn { display: inline-flex; align-items: center; justify-content: center; }
+  /* 单行工具栏：日期导航 + 周/月切换 + 生成图片 + ⋯ */
+  .toolbar { gap: 8px; }
+  .toolbar .range-label { font-size: 13px; }
+  .toolbar .seg-btn { padding: 9px 10px; }
+  .toolbar .nav { width: 38px; height: 38px; }
+}
 .sheet-wrap { display: flex; justify-content: center; }
 .sheet-scale { transform-origin: top center; }
 /* 报告本体恒定 1080px 布局宽：任何设备布局一致；窄屏由外层整体缩小适配屏宽 */
