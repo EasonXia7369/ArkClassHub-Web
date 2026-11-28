@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, onBeforeUnmount, ref, watch } from 'vue'
 import { RouterLink, RouterView, useRoute, useRouter } from 'vue-router'
 import { useDark, useToggle } from '@vueuse/core'
 import { useAuthStore } from '@/stores/auth'
@@ -225,6 +225,24 @@ watch(() => auth.user?.userId, () => undo.reset())
 
 /** 撤销历史面板（侧栏/顶栏按钮打开） */
 const undoOpen = ref(false)
+
+/** 手机端「⋯」锚定菜单（iOS 风，从按钮下方弹出） */
+const menuOpen = ref(false)
+const moreBtn = ref<HTMLElement | null>(null)
+const menuStyle = ref<Record<string, string>>({})
+
+async function openMenu() {
+  menuOpen.value = true
+  await nextTick()
+  const r = moreBtn.value?.getBoundingClientRect()
+  if (r) {
+    menuStyle.value = {
+      top: Math.round(r.bottom + 8) + 'px',
+      right: Math.max(12, Math.round(window.innerWidth - r.right)) + 'px',
+    }
+  }
+}
+useEscClose(menuOpen, () => (menuOpen.value = false))
 </script>
 
 <template>
@@ -297,20 +315,24 @@ const undoOpen = ref(false)
         </div>
         <div class="top-right">
           <span class="whoami"><span class="whoami-name">{{ auth.user?.name }}</span><i v-if="auth.user?.role === 'admin'">管理员</i><i v-else-if="auth.user?.role === 'student'">值日生</i></span>
-          <button class="gbtn icon topbtn" title="撤销历史" @click="undoOpen = true">
+          <!-- 手机端收纳：撤销/关于/深浅色/退出 收进「⋯」底部动作面板（≤860px），桌面端这些按钮本就隐藏走侧栏 -->
+          <button class="gbtn icon topbtn topbtn-fold" title="撤销历史" @click="undoOpen = true">
             <span class="undo-icon-wrap">
               <Icon name="undo" :size="17" />
               <b v-if="undo.depth.value" class="badge">{{ undo.depth.value > 30 ? '30+' : undo.depth.value }}</b>
             </span>
           </button>
-          <button class="gbtn icon topbtn" title="关于" @click="router.push('/about')">
+          <button class="gbtn icon topbtn topbtn-fold" title="关于" @click="router.push('/about')">
             <Icon name="info" :size="17" />
           </button>
-          <button class="gbtn icon topbtn" :title="isDark ? '切换浅色' : '切换深色'" @click="toggleDark()">
+          <button class="gbtn icon topbtn topbtn-fold" :title="isDark ? '切换浅色' : '切换深色'" @click="toggleDark()">
             <Icon :name="isDark ? 'sun' : 'moon'" :size="17" />
           </button>
-          <button class="gbtn icon topbtn" title="退出登录" @click="logout">
+          <button class="gbtn icon topbtn topbtn-fold" title="退出登录" @click="logout">
             <Icon name="logout" :size="17" />
+          </button>
+          <button ref="moreBtn" class="gbtn icon topbtn more-top" title="更多" @click="openMenu">
+            <Icon name="more" :size="17" />
           </button>
         </div>
       </header>
@@ -446,6 +468,37 @@ const undoOpen = ref(false)
     <UndoBar />
     <!-- 撤销历史面板：侧栏/顶栏按钮打开 -->
     <UndoHistory :open="undoOpen" @close="undoOpen = false" />
+
+    <!-- 手机端「⋯」锚定菜单（iOS 风）：撤销/关于/深浅色/退出 -->
+    <Teleport to="body">
+      <div v-if="menuOpen" class="menu-backdrop" @click.self="menuOpen = false" @contextmenu.prevent="menuOpen = false">
+        <div class="top-menu glass-strong" :style="menuStyle">
+          <button class="menu-item" @click="menuOpen = false; undoOpen = true">
+            <Icon name="undo" :size="17" />
+            <span class="mi-label">撤销历史</span>
+            <b v-if="undo.depth.value" class="mi-badge">{{ undo.depth.value > 30 ? '30+' : undo.depth.value }}</b>
+            <Icon name="chevronRight" :size="14" />
+          </button>
+          <div class="menu-sep" />
+          <button class="menu-item" @click="menuOpen = false; router.push('/about')">
+            <Icon name="info" :size="17" />
+            <span class="mi-label">关于方舟班级中心</span>
+            <Icon name="chevronRight" :size="14" />
+          </button>
+          <div class="menu-sep" />
+          <button class="menu-item" @click="toggleDark()">
+            <Icon :name="isDark ? 'sun' : 'moon'" :size="17" />
+            <span class="mi-label">{{ isDark ? '切换到浅色模式' : '切换到深色模式' }}</span>
+            <span class="mi-state">{{ isDark ? '深色' : '浅色' }}</span>
+          </button>
+          <div class="menu-sep" />
+          <button class="menu-item danger" @click="menuOpen = false; logout()">
+            <Icon name="logout" :size="17" />
+            <span class="mi-label">退出登录</span>
+          </button>
+        </div>
+      </div>
+    </Teleport>
 
     <!-- 首次访问（或协议改版后）强制同意：不勾选不能进入 -->
     <ConsentDialog
@@ -797,10 +850,85 @@ const undoOpen = ref(false)
   .top-right {
     gap: 6px;
   }
+  /* 顶栏收纳：撤销/关于/深浅色/退出 隐藏，只留「⋯」（底部动作面板） */
+  .gbtn.icon.topbtn.topbtn-fold {
+    display: none;
+  }
   .content {
     padding: 12px 16px calc(84px + env(safe-area-inset-bottom));
   }
 }
+/* ---------- 手机端「⋯」锚定菜单（iOS 风，按钮下方弹出） ---------- */
+.menu-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 95;
+  /* iOS 菜单：背景不变暗，点击空白处即关闭 */
+  background: transparent;
+}
+.top-menu {
+  position: fixed;
+  width: min(250px, 78vw);
+  padding: 5px;
+  border-radius: 16px;
+  transform-origin: top right;
+  animation: menu-in 0.18s var(--ease-spring);
+  box-shadow: 0 18px 44px rgba(0, 0, 0, 0.22), var(--glass-inset);
+}
+@keyframes menu-in {
+  from {
+    transform: scale(0.9);
+    opacity: 0;
+  }
+  to {
+    transform: none;
+    opacity: 1;
+  }
+}
+.menu-item {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  width: 100%;
+  padding: 12px 10px;
+  border: none;
+  background: transparent;
+  font-family: inherit;
+  font-size: 14.5px;
+  color: var(--text);
+  cursor: pointer;
+  border-radius: 11px;
+  text-align: left;
+}
+.menu-item:active {
+  background: var(--field);
+}
+.menu-item .mi-label {
+  flex: 1;
+  font-weight: 500;
+}
+.menu-item .mi-badge {
+  font-size: 11.5px;
+  font-weight: 700;
+  background: var(--primary-soft);
+  color: var(--primary);
+  padding: 2px 9px;
+  border-radius: 999px;
+  font-variant-numeric: tabular-nums;
+}
+.menu-item .mi-state {
+  font-size: 12px;
+  color: var(--muted);
+}
+.menu-item.danger {
+  color: var(--absent);
+}
+.menu-sep {
+  height: 1px;
+  background: var(--line-soft);
+  margin: 3px 10px;
+}
+
 .offline-overlay {
   position: fixed;
   inset: 0;
